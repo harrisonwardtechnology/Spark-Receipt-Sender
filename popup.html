@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      width: 280px;
+      margin: 0;
+      padding: 14px;
+      background: #ffffff;
+      color: #1f2937;
+    }
+    h1 {
+      font-size: 14px;
+      margin: 0 0 4px 0;
+    }
+    #pageTitle {
+      font-size: 12px;
+      color: #6b7280;
+      margin: 0 0 12px 0;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #sendBtn {
+      width: 100%;
+      padding: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: #ffffff;
+      background: #0d9488;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    #sendBtn:hover {
+      background: #0f766e;
+    }
+    #sendBtn:disabled {
+      background: #9ca3af;
+      cursor: default;
+    }
+    #plan {
+      font-size: 11px;
+      color: #6b7280;
+      margin: 10px 0 0 0;
+      line-height: 1.4;
+    }
+    #emailHint {
+      display: none;
+      font-size: 11px;
+      color: #b45309;
+      background: #fef3c7;
+      border-radius: 6px;
+      padding: 8px;
+      margin: 10px 0 0 0;
+      line-height: 1.4;
+    }
+    #footer {
+      margin-top: 12px;
+      text-align: right;
+    }
+    #optionsLink {
+      font-size: 11px;
+      color: #0d9488;
+      text-decoration: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Send to SparkReceipt</h1>
+  <p id="pageTitle">This page</p>
+  <button id="sendBtn">Grab this page</button>
+  <p id="plan"></p>
+  <p id="emailHint">Heads up: no SparkReceipt email saved yet. Add it in Settings so the draft is addressed for you.</p>
+  <div id="footer">
+    <a href="#" id="optionsLink">Settings</a>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
