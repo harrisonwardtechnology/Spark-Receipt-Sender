@@ -1,0 +1,28 @@
+Receipt Sender - Source Available License
+
+Copyright (c) 2026 Harrison Ward. All rights reserved.
+
+The source code of this project is published for transparency, so anyone can
+verify what the extension does before installing it.
+
+You may:
+
+- Read and audit the source code
+- Download and install the extension for your own personal use
+- Fork the repository on GitHub for the purpose of proposing changes back to
+  this project
+
+You may not, without written permission from the copyright holder:
+
+- Republish this extension or a modified version of it to the Chrome Web
+  Store or any other extension marketplace
+- Redistribute the code, in original or modified form, as part of another
+  product
+- Sell this extension or access to it
+
+This software is provided as is, without warranty of any kind. The author is
+not responsible for anything that happens to your receipts, your expense
+accounts, or your afternoon.
+
+Not affiliated with SparkReceipt or Expensify. Their names belong to their
+owners and are used here only to describe what this tool connects to.

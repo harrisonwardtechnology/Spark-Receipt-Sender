@@ -70,6 +70,12 @@ Store friendly since v4: no debugger permission, no blanket site access.
 
 Privacy: nothing is collected, nothing leaves your machine except the upload to your own SparkReceipt or Expensify session. Full policy in privacy.html.
 
+## Security
+
+- Zero dependencies. No npm packages, no build step, no supply chain. What you read in this repo is exactly what runs
+- No remote code, no analytics, no telemetry, no servers. See [PRIVACY.md](PRIVACY.md)
+- Minimal permissions by design, and the one broad permission is optional and off until you use batch mode
+
 ## Notes
 
 - SparkReceipt grabs land as Expense or receipt documents, Expensify grabs land as scanned expenses. Change types inside the apps if needed
@@ -77,3 +83,7 @@ Privacy: nothing is collected, nothing leaves your machine except the upload to 
 - Gmail and mail app drafts address themselves to the right place per service: your SparkReceipt forwarding address, or receipts@expensify.com (send from your Expensify login email)
 - Chrome pages and the Chrome Web Store cannot be captured
 - Loaded unpacked, so Chrome may occasionally nudge about developer mode extensions. Dismiss it
+
+## License
+
+Source available for transparency and personal use. No republishing to extension stores, no redistribution. Full terms in [LICENSE](LICENSE).
