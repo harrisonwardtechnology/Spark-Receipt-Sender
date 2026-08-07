@@ -1,6 +1,6 @@
 # Receipt Sender
 
-![Version](https://img.shields.io/badge/version-3.0.0-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038)
+![Version](https://img.shields.io/badge/version-4.0.0-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038)
 
 A Chrome extension that turns any web page or image into a receipt inside [SparkReceipt](https://sparkreceipt.com) or [Expensify](https://expensify.com) with one click. No dragging, no forwarding, no babysitting. Pick the service in the popup, hit the button, done.
 
@@ -8,19 +8,22 @@ Built because SparkReceipt has no browser extension and Expensify killed theirs.
 
 ## What it does
 
-One click on a receipt page and the extension grabs the whole page as a PDF, opens your receipt service, walks its own upload flow, and the scan starts. SparkReceipt: Add documents, Expense or receipt, attach, Confirm. Expensify: Scan receipt, drop on the upload zone, Create expense. A small note in the corner narrates each step. A backup copy of every grab lands in Downloads/Receipts.
+One click on a receipt page and the extension grabs the whole page as a stitched full page image, opens your receipt service, walks its own upload flow, and the scan starts. SparkReceipt: Add documents, Expense or receipt, attach, Confirm. Expensify: Scan receipt, drop on the upload zone, Create expense. A small note in the corner narrates each step. A backup copy of every grab lands in Downloads/Receipts.
 
 ## Features
 
 | Feature | How |
 |---|---|
-| Grab a whole page as PDF | Toolbar button, right click, or Alt+Shift+S |
-| Grab just an image | Right click any image, Send this image to SparkReceipt |
+| Grab a whole page | Stitched full page image, via toolbar, right click, or Alt+Shift+S |
+| Grab just an image | Right click any image and send only that |
+| Grab all tabs | One click batches every tab in the window through the queue |
 | Two services | SparkReceipt and Expensify, switchable per grab in the popup |
 | Auto drop | Walks each service's real upload flow and confirms for you |
 | Silent mode | Runs in a background tab so you never leave your page |
 | Auto close the tab | Optional, waits for the upload to finish first |
 | Auto delete the backup file | Optional, only after a fully successful drop |
+| Recent grabs list | Last 10 grabs in the popup with pass or fail marks |
+| Type picker | SparkReceipt grabs can file as expense, invoice, statement, or other |
 | GUID file names | Every grab saves as a unique id, no name collisions |
 | Fallback safety net | Any miss leaves the tab open and the file in Downloads/Receipts |
 
@@ -49,7 +52,7 @@ Right click the toolbar icon, choose Options.
 
 - **Send receipts to**: SparkReceipt or Expensify, also switchable right in the popup
 - **After grabbing**: automatic drop (default), open the service for a manual drop, Gmail draft, your mail app, or just save the file
-- **Format**: full page PDF (default) or a screenshot of the visible part
+- **Format**: stitched full page image (default) or a quick visible screenshot
 - **Extras**: pop open the folder after saving, close the SparkReceipt tab when the upload finishes, delete the backup file when the upload finishes, silent background mode. All off by default.
 
 ## How the auto drop works
@@ -58,9 +61,14 @@ Neither service has a public upload API, so the extension drives each web app th
 
 ## Permissions, in plain English
 
-- **debugger**: how Chrome prints a full page to PDF. Attached for about a second per grab, then released
-- **site access**: lets the content scripts drop files into app.sparkreceipt.com and new.expensify.com, and lets the extension download the image you right click from any site
-- **downloads, storage, contextMenus, activeTab**: the boring plumbing
+Store friendly since v4: no debugger permission, no blanket site access.
+
+- **activeTab + scripting**: capture the page you asked to grab, stitch long pages, fetch a right clicked image
+- **site access, two domains only**: app.sparkreceipt.com and new.expensify.com, where the content scripts drop your files in
+- **optional all sites access**: asked once, only if you use Grab all tabs (background tabs cannot be captured without it). Decline and everything else still works
+- **downloads, storage, contextMenus**: the boring plumbing
+
+Privacy: nothing is collected, nothing leaves your machine except the upload to your own SparkReceipt or Expensify session. Full policy in privacy.html.
 
 ## Notes
 

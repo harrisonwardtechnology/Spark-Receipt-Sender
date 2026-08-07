@@ -1,7 +1,7 @@
 // Send to SparkReceipt - runs on app.sparkreceipt.com
 // Picks up a freshly captured receipt from the extension, walks SparkReceipt's
 // own add-document flow, attaches the file, and confirms it.
-// Flow verified against the live app: Add documents -> Expense or receipt ->
+// Flow verified against the live app: Add documents -> document type ->
 // .file-dropzone input[type=file] -> Confirm.
 
 (async function () {
@@ -121,7 +121,14 @@
       document.querySelectorAll("button.add-document-type-option")
     );
     if (!options.length) return null;
+    const wanted = {
+      expense: /expense or receipt/i,
+      income: /income or invoice/i,
+      statement: /bank or credit card statement/i,
+      other: /other document/i
+    }[payload.sparkType || "expense"] || /expense or receipt/i;
     return (
+      options.find((o) => wanted.test(o.textContent || "")) ||
       options.find((o) => /expense or receipt/i.test(o.textContent || "")) ||
       options[0]
     );

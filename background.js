@@ -1,15 +1,19 @@
 // Receipt Sender - background service worker
 // Sends captured pages and images to SparkReceipt or Expensify.
+// Store-friendly build: no debugger permission, full-page capture is done by
+// scrolling and stitching screenshots. Broad site access is optional and only
+// requested for batch mode.
 
 const DEFAULTS = {
   service: "sparkreceipt", // sparkreceipt | expensify
+  sparkType: "expense", // expense | income | statement | other
   sparkEmail: "",
   destination: "autodrop", // autodrop | serviceweb | gmail | mailto | none
-  format: "pdf", // pdf | png
+  format: "full", // full (stitched image) | visible
   reveal: false,
-  closeTab: false, // close the service tab after a successful upload
-  deleteLocal: false, // delete the backup file after a successful upload
-  silent: false // do the drop in a background tab without stealing focus
+  closeTab: false,
+  deleteLocal: false,
+  silent: false
 };
 
 const SERVICES = {
@@ -27,7 +31,9 @@ const SERVICES = {
   }
 };
 
-const PENDING_MAX_AGE_MS = 3 * 60 * 1000;
+const QUEUE_MAX_AGE_MS = 10 * 60 * 1000;
+const MAX_SLICES = 12;
+const HISTORY_MAX = 10;
 
 function getService(settings) {
   return SERVICES[settings.service] || SERVICES.sparkreceipt;
@@ -36,8 +42,10 @@ function getService(settings) {
 async function loadSettings() {
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const settings = { ...DEFAULTS, ...stored };
-  // Migrate the old "sparkweb" destination name
   if (settings.destination === "sparkweb") settings.destination = "serviceweb";
+  if (settings.format === "pdf" || settings.format === "png") {
+    settings.format = settings.format === "pdf" ? "full" : "visible";
+  }
   return settings;
 }
 
@@ -98,24 +106,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  if (msg.type === "sendAllTabs" && msg.windowId) {
+    runBatch(msg.windowId).catch((e) => console.error(e));
+    sendResponse({ ok: true });
+    return false;
+  }
+
   if (msg.type === "getPendingReceipt") {
-    chrome.storage.session
-      .get("pending")
-      .then(({ pending }) => {
-        if (pending && Date.now() - pending.createdAt < PENDING_MAX_AGE_MS) {
-          sendResponse(pending);
-        } else {
-          sendResponse(null);
-        }
-      })
+    getQueueHead()
+      .then((head) => sendResponse(head))
       .catch(() => sendResponse(null));
     return true;
   }
 
   if (msg.type === "receiptConsumed") {
-    chrome.storage.session.remove("pending");
-    sendResponse({ ok: true });
-    return false;
+    consumeHead()
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
   }
 
   if (msg.type === "dropFinished") {
@@ -128,38 +136,73 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   return false;
 });
 
+// ---------- queue ----------
+
+async function getQueue() {
+  const { queue } = await chrome.storage.local.get("queue");
+  const list = Array.isArray(queue) ? queue : [];
+  const fresh = list.filter((i) => Date.now() - i.createdAt < QUEUE_MAX_AGE_MS);
+  if (fresh.length !== list.length) {
+    await chrome.storage.local.set({ queue: fresh });
+  }
+  return fresh;
+}
+
+async function setQueue(queue) {
+  await chrome.storage.local.set({ queue: queue });
+}
+
+async function enqueue(item) {
+  const queue = await getQueue();
+  queue.push(item);
+  await setQueue(queue);
+}
+
+async function getQueueHead() {
+  const queue = await getQueue();
+  return queue.length ? queue[0] : null;
+}
+
+async function consumeHead() {
+  const queue = await getQueue();
+  const head = queue.shift() || null;
+  await setQueue(queue);
+  await chrome.storage.local.set({ inFlight: head });
+}
+
 async function handleDropFinished(msg, sender) {
   await flashBadge(
     msg.success ? "OK" : "!",
     msg.success ? "#188038" : "#d93025"
   );
-  if (!msg.success) return;
+  const { inFlight } = await chrome.storage.local.get("inFlight");
   const settings = await loadSettings();
+  const queue = await getQueue();
 
-  if (settings.deleteLocal) {
-    try {
-      const { lastDownloadId } = await chrome.storage.session.get(
-        "lastDownloadId"
-      );
-      if (typeof lastDownloadId === "number") {
-        try {
-          await chrome.downloads.removeFile(lastDownloadId);
-        } catch (e) {
-          // file already gone or moved, nothing to do
-        }
-        try {
-          await chrome.downloads.erase({ id: lastDownloadId });
-        } catch (e) {
-          // history entry cleanup is best effort
-        }
-        chrome.storage.session.remove("lastDownloadId");
+  if (inFlight) {
+    await historyUpdate(inFlight.id, msg.success ? "ok" : "fail");
+    if (msg.success && settings.deleteLocal && typeof inFlight.downloadId === "number") {
+      try {
+        await chrome.downloads.removeFile(inFlight.downloadId);
+      } catch (e) {
+        // file already gone
       }
-    } catch (e) {
-      console.warn("Could not delete the backup file", e);
+      try {
+        await chrome.downloads.erase({ id: inFlight.downloadId });
+      } catch (e) {
+        // best effort
+      }
     }
+    await chrome.storage.local.remove("inFlight");
   }
 
-  if (settings.closeTab && sender && sender.tab && sender.tab.id) {
+  if (queue.length > 0) {
+    // More receipts waiting: run the next one through the same tab
+    await openServiceTab(settings);
+    return;
+  }
+
+  if (msg.success && settings.closeTab && sender && sender.tab && sender.tab.id) {
     try {
       await chrome.tabs.remove(sender.tab.id);
     } catch (e) {
@@ -168,14 +211,44 @@ async function handleDropFinished(msg, sender) {
   }
 }
 
+// ---------- history ----------
+
+async function historyAdd(entry) {
+  const { history } = await chrome.storage.local.get("history");
+  const list = Array.isArray(history) ? history : [];
+  list.unshift(entry);
+  await chrome.storage.local.set({ history: list.slice(0, HISTORY_MAX) });
+}
+
+async function historyUpdate(id, status) {
+  const { history } = await chrome.storage.local.get("history");
+  const list = Array.isArray(history) ? history : [];
+  const hit = list.find((h) => h.id === id);
+  if (hit) {
+    hit.status = status;
+    await chrome.storage.local.set({ history: list });
+  }
+}
+
+// ---------- single grabs ----------
+
 async function run(tab) {
   const settings = await loadSettings();
   await setBadge("...", "#5f6368");
+  const entryId = crypto.randomUUID();
+  await historyAdd({
+    id: entryId,
+    ts: Date.now(),
+    host: hostOf(tab.url),
+    service: settings.service,
+    status: "working"
+  });
   try {
     const capture = await capturePage(tab, settings.format);
-    await deliver(tab, settings, capture);
+    await deliver(tab, settings, capture, entryId);
   } catch (e) {
     console.error("Receipt Sender failed:", e);
+    await historyUpdate(entryId, "fail");
     await flashBadge("!", "#d93025");
   }
 }
@@ -183,17 +256,75 @@ async function run(tab) {
 async function runImage(tab, srcUrl) {
   const settings = await loadSettings();
   await setBadge("...", "#5f6368");
+  const entryId = crypto.randomUUID();
+  await historyAdd({
+    id: entryId,
+    ts: Date.now(),
+    host: hostOf(tab.url),
+    service: settings.service,
+    status: "working"
+  });
   try {
-    const capture = await fetchImageAsDataUrl(srcUrl);
-    await deliver(tab, settings, capture);
+    const capture = await captureImage(tab, srcUrl);
+    await deliver(tab, settings, capture, entryId);
   } catch (e) {
     console.error("Receipt Sender image failed:", e);
+    await historyUpdate(entryId, "fail");
     await flashBadge("!", "#d93025");
   }
 }
 
-async function deliver(tab, settings, capture) {
-  const filename = buildFilename(tab, capture.ext);
+// ---------- batch ----------
+
+async function runBatch(windowId) {
+  const settings = await loadSettings();
+  const all = await chrome.tabs.query({ windowId: windowId });
+  const targets = all.filter(
+    (t) =>
+      t.id &&
+      t.url &&
+      /^https?:/.test(t.url) &&
+      !t.url.startsWith(SERVICES.sparkreceipt.appUrl) &&
+      !t.url.startsWith(SERVICES.expensify.appUrl)
+  );
+  if (!targets.length) {
+    await flashBadge("0", "#d93025");
+    return;
+  }
+
+  for (let i = 0; i < targets.length; i++) {
+    const tab = targets[i];
+    await setBadge(i + 1 + "/" + targets.length, "#5f6368");
+    const entryId = crypto.randomUUID();
+    await historyAdd({
+      id: entryId,
+      ts: Date.now(),
+      host: hostOf(tab.url),
+      service: settings.service,
+      status: "working"
+    });
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      await sleep(500);
+      const fresh = await chrome.tabs.get(tab.id);
+      const capture = await capturePage(fresh, settings.format);
+      await deliver(fresh, settings, capture, entryId, true);
+    } catch (e) {
+      console.warn("Batch grab failed for tab", tab.url, e);
+      await historyUpdate(entryId, "fail");
+    }
+  }
+
+  if (settings.destination === "autodrop") {
+    await openServiceTab(settings);
+  }
+  await flashBadge("OK", "#188038");
+}
+
+// ---------- delivery ----------
+
+async function deliver(tab, settings, capture, entryId, batchMode) {
+  const filename = buildFilename(capture.ext);
 
   // Always keep a copy in Downloads/Receipts as a safety net
   const downloadId = await chrome.downloads.download({
@@ -216,133 +347,46 @@ async function deliver(tab, settings, capture) {
     }
   }
 
-  await openDestination(tab, settings, capture, filename, downloadId);
-  if (settings.destination !== "autodrop") {
-    // Autodrop flashes its badge when the drop actually finishes
+  if (settings.destination === "autodrop") {
+    await enqueueCapture(capture, filename, settings, downloadId, entryId);
+    if (!batchMode) {
+      await openServiceTab(settings);
+    }
+  } else {
+    await openDestination(tab, settings);
+    await historyUpdate(entryId, "saved");
     await flashBadge("OK", "#188038");
   }
 }
 
-async function fetchImageAsDataUrl(srcUrl) {
-  const resp = await fetch(srcUrl, { credentials: "include" });
-  if (!resp.ok) throw new Error("Image fetch failed: " + resp.status);
-  const blob = await resp.blob();
-  let mime = blob.type || "image/png";
-  if (!/^image\//.test(mime)) mime = "image/png";
-  const buf = await blob.arrayBuffer();
-  return {
-    url: "data:" + mime + ";base64," + bufToBase64(buf),
-    ext: extFromMime(mime)
-  };
-}
-
-function bufToBase64(buf) {
-  const bytes = new Uint8Array(buf);
-  let binary = "";
-  const CHUNK = 0x8000;
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
-  }
-  return btoa(binary);
-}
-
-function extFromMime(mime) {
-  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
-  if (mime.includes("webp")) return "webp";
-  if (mime.includes("gif")) return "gif";
-  if (mime.includes("heic")) return "heic";
-  return "png";
-}
-
-async function capturePage(tab, format) {
-  if (format === "pdf") {
-    try {
-      const data = await printToPdf(tab.id);
-      return { url: "data:application/pdf;base64," + data, ext: "pdf" };
-    } catch (e) {
-      console.warn("PDF capture failed, falling back to screenshot", e);
-    }
-  }
-  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: "png"
-  });
-  return { url: dataUrl, ext: "png" };
-}
-
-async function printToPdf(tabId) {
-  const target = { tabId: tabId };
-  await chrome.debugger.attach(target, "1.3");
-  try {
-    const result = await chrome.debugger.sendCommand(target, "Page.printToPDF", {
-      printBackground: true,
-      marginTop: 0.25,
-      marginBottom: 0.25,
-      marginLeft: 0.25,
-      marginRight: 0.25
-    });
-    return result.data;
-  } finally {
-    try {
-      await chrome.debugger.detach(target);
-    } catch (e) {
-      // already detached
-    }
-  }
-}
-
-function buildFilename(tab, ext) {
-  return "Receipts/" + crypto.randomUUID() + "." + ext;
-}
-
-function waitForDownload(downloadId) {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      chrome.downloads.onChanged.removeListener(listener);
-      resolve();
-    }, 15000);
-    const listener = (delta) => {
-      if (delta.id !== downloadId || !delta.state) return;
-      if (delta.state.current === "complete") {
-        clearTimeout(timer);
-        chrome.downloads.onChanged.removeListener(listener);
-        resolve();
-      } else if (delta.state.current === "interrupted") {
-        clearTimeout(timer);
-        chrome.downloads.onChanged.removeListener(listener);
-        reject(new Error("Download failed"));
-      }
-    };
-    chrome.downloads.onChanged.addListener(listener);
+async function enqueueCapture(capture, filename, settings, downloadId, entryId) {
+  const comma = capture.url.indexOf(",");
+  const head = capture.url.slice(0, comma);
+  const b64 = capture.url.slice(comma + 1);
+  const mime = head.slice(5, head.indexOf(";"));
+  await enqueue({
+    id: entryId,
+    service: settings.service,
+    sparkType: settings.sparkType,
+    b64: b64,
+    mime: mime,
+    filename: filename.split("/").pop(),
+    createdAt: Date.now(),
+    downloadId: downloadId,
+    closeTab: !!settings.closeTab,
+    deleteLocal: !!settings.deleteLocal
   });
 }
 
-function emailFor(settings) {
-  const svc = getService(settings);
-  return svc.email || settings.sparkEmail || "";
-}
-
-async function openDestination(tab, settings, capture, filename, downloadId) {
-  const title = tab.title || "Receipt";
+async function openDestination(tab, settings) {
+  const title = (tab && tab.title) || "Receipt";
   const subject = "Receipt: " + title;
   const body =
     "Receipt captured from " +
-    tab.url +
+    ((tab && tab.url) || "a page") +
     "\n\nAttach the newest file from Downloads/Receipts before sending.";
 
-  if (settings.destination === "autodrop") {
-    const handedOff = await stashPendingReceipt(
-      capture,
-      filename,
-      settings,
-      downloadId
-    );
-    await openServiceTab(settings);
-    if (!handedOff) {
-      console.warn(
-        "Receipt too large for auto-drop. It is saved in Downloads/Receipts."
-      );
-    }
-  } else if (settings.destination === "serviceweb") {
+  if (settings.destination === "serviceweb") {
     await chrome.tabs.create({ url: getService(settings).appUrl });
   } else if (settings.destination === "gmail") {
     const url =
@@ -371,30 +415,278 @@ async function openDestination(tab, settings, capture, filename, downloadId) {
   // destination "none": file is saved, nothing else to open
 }
 
-async function stashPendingReceipt(capture, filename, settings, downloadId) {
-  try {
-    const comma = capture.url.indexOf(",");
-    const head = capture.url.slice(0, comma);
-    const b64 = capture.url.slice(comma + 1);
-    const mime = head.slice(5, head.indexOf(";"));
-    const base = filename.split("/").pop();
-    await chrome.storage.session.set({
-      pending: {
-        service: settings.service,
-        b64: b64,
-        mime: mime,
-        filename: base,
-        createdAt: Date.now(),
-        closeTab: !!settings.closeTab,
-        deleteLocal: !!settings.deleteLocal
-      },
-      lastDownloadId: downloadId
-    });
-    return true;
-  } catch (e) {
-    // Too big for session storage. The downloaded copy is the fallback.
-    return false;
+function emailFor(settings) {
+  const svc = getService(settings);
+  return svc.email || settings.sparkEmail || "";
+}
+
+// ---------- page capture (no debugger needed) ----------
+
+async function capturePage(tab, format) {
+  if (format === "full") {
+    try {
+      return await captureFullPage(tab);
+    } catch (e) {
+      console.warn("Full page capture failed, falling back to visible", e);
+    }
   }
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+    format: "jpeg",
+    quality: 92
+  });
+  return { url: dataUrl, ext: "jpg" };
+}
+
+async function captureFullPage(tab) {
+  const [metrics] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: () => ({
+      scrollHeight: Math.max(
+        document.documentElement.scrollHeight,
+        document.body ? document.body.scrollHeight : 0
+      ),
+      viewport: window.innerHeight,
+      width: window.innerWidth,
+      dpr: window.devicePixelRatio || 1,
+      originalY: window.scrollY
+    })
+  });
+  const m = metrics.result;
+  const slices = Math.min(
+    MAX_SLICES,
+    Math.max(1, Math.ceil(m.scrollHeight / m.viewport))
+  );
+
+  const shots = [];
+  for (let i = 0; i < slices; i++) {
+    const targetY = Math.min(i * m.viewport, m.scrollHeight - m.viewport);
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: (y, hideFixed) => {
+        if (hideFixed && !window.__rsHidden) {
+          window.__rsHidden = [];
+          document.querySelectorAll("*").forEach((el) => {
+            const pos = getComputedStyle(el).position;
+            if (pos === "fixed" || pos === "sticky") {
+              window.__rsHidden.push([el, el.style.visibility]);
+              el.style.visibility = "hidden";
+            }
+          });
+        }
+        window.scrollTo(0, y);
+      },
+      args: [Math.max(0, targetY), i > 0]
+    });
+    await sleep(650); // render + captureVisibleTab rate limit
+    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+      format: "png"
+    });
+    shots.push({ y: Math.max(0, targetY), dataUrl: dataUrl });
+    if (slices === 1) break;
+  }
+
+  // Restore hidden elements and scroll position
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (y) => {
+      if (window.__rsHidden) {
+        window.__rsHidden.forEach(([el, vis]) => {
+          el.style.visibility = vis;
+        });
+        window.__rsHidden = null;
+      }
+      window.scrollTo(0, y);
+    },
+    args: [m.originalY]
+  });
+
+  if (shots.length === 1) {
+    return { url: shots[0].dataUrl, ext: "png" };
+  }
+
+  // Stitch
+  const bitmaps = [];
+  for (const s of shots) {
+    const blob = await (await fetch(s.dataUrl)).blob();
+    bitmaps.push(await createImageBitmap(blob));
+  }
+  const sliceW = bitmaps[0].width;
+  const scale = sliceW / m.width;
+  const fullH = Math.min(m.scrollHeight, slices * m.viewport) * scale;
+  const canvas = new OffscreenCanvas(sliceW, Math.round(fullH));
+  const ctx = canvas.getContext("2d");
+  shots.forEach((s, i) => {
+    ctx.drawImage(bitmaps[i], 0, Math.round(s.y * scale));
+  });
+  const outBlob = await canvas.convertToBlob({
+    type: "image/jpeg",
+    quality: 0.9
+  });
+  const buf = await outBlob.arrayBuffer();
+  return {
+    url: "data:image/jpeg;base64," + bufToBase64(buf),
+    ext: "jpg"
+  };
+}
+
+// ---------- image capture ----------
+
+async function captureImage(tab, srcUrl) {
+  // 1) Try fetching from inside the page, where the site's own session applies
+  try {
+    const [res] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: async (url) => {
+        try {
+          const resp = await fetch(url, { credentials: "include" });
+          if (!resp.ok) return null;
+          const blob = await resp.blob();
+          if (!/^image\//.test(blob.type || "")) return null;
+          const buf = await blob.arrayBuffer();
+          const bytes = new Uint8Array(buf);
+          let binary = "";
+          for (let i = 0; i < bytes.length; i += 0x8000) {
+            binary += String.fromCharCode.apply(
+              null,
+              bytes.subarray(i, i + 0x8000)
+            );
+          }
+          return { b64: btoa(binary), mime: blob.type };
+        } catch (e) {
+          return null;
+        }
+      },
+      args: [srcUrl]
+    });
+    if (res && res.result && res.result.b64) {
+      return {
+        url: "data:" + res.result.mime + ";base64," + res.result.b64,
+        ext: extFromMime(res.result.mime)
+      };
+    }
+  } catch (e) {
+    // fall through
+  }
+
+  // 2) If the user has granted broad access (batch mode), fetch directly
+  try {
+    const granted = await chrome.permissions.contains({
+      origins: ["<all_urls>"]
+    });
+    if (granted) {
+      const resp = await fetch(srcUrl, { credentials: "include" });
+      if (resp.ok) {
+        const blob = await resp.blob();
+        let mime = blob.type || "image/png";
+        if (!/^image\//.test(mime)) mime = "image/png";
+        const buf = await blob.arrayBuffer();
+        return {
+          url: "data:" + mime + ";base64," + bufToBase64(buf),
+          ext: extFromMime(mime)
+        };
+      }
+    }
+  } catch (e) {
+    // fall through
+  }
+
+  // 3) Last resort: crop the image out of a screenshot of the visible tab
+  const [rectRes] = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (url) => {
+      const img = Array.from(document.images).find(
+        (im) => im.currentSrc === url || im.src === url
+      );
+      if (!img) return null;
+      img.scrollIntoView({ block: "center" });
+      const r = img.getBoundingClientRect();
+      return {
+        x: r.x,
+        y: r.y,
+        w: r.width,
+        h: r.height,
+        dpr: window.devicePixelRatio || 1
+      };
+    },
+    args: [srcUrl]
+  });
+  const rect = rectRes && rectRes.result;
+  if (!rect || rect.w < 4 || rect.h < 4) {
+    throw new Error("Could not reach that image");
+  }
+  await sleep(400);
+  const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+    format: "png"
+  });
+  const blob = await (await fetch(dataUrl)).blob();
+  const bitmap = await createImageBitmap(blob);
+  const x = Math.max(0, rect.x * rect.dpr);
+  const y = Math.max(0, rect.y * rect.dpr);
+  const w = Math.min(bitmap.width - x, rect.w * rect.dpr);
+  const h = Math.min(bitmap.height - y, rect.h * rect.dpr);
+  const canvas = new OffscreenCanvas(Math.round(w), Math.round(h));
+  canvas.getContext("2d").drawImage(bitmap, -x, -y);
+  const outBlob = await canvas.convertToBlob({ type: "image/png" });
+  const buf = await outBlob.arrayBuffer();
+  return { url: "data:image/png;base64," + bufToBase64(buf), ext: "png" };
+}
+
+// ---------- helpers ----------
+
+function hostOf(url) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch (e) {
+    return "page";
+  }
+}
+
+function bufToBase64(buf) {
+  const bytes = new Uint8Array(buf);
+  let binary = "";
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(binary);
+}
+
+function extFromMime(mime) {
+  if (mime.includes("jpeg") || mime.includes("jpg")) return "jpg";
+  if (mime.includes("webp")) return "webp";
+  if (mime.includes("gif")) return "gif";
+  if (mime.includes("heic")) return "heic";
+  return "png";
+}
+
+function buildFilename(ext) {
+  return "Receipts/" + crypto.randomUUID() + "." + ext;
+}
+
+function sleep(ms) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+function waitForDownload(downloadId) {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      chrome.downloads.onChanged.removeListener(listener);
+      resolve();
+    }, 15000);
+    const listener = (delta) => {
+      if (delta.id !== downloadId || !delta.state) return;
+      if (delta.state.current === "complete") {
+        clearTimeout(timer);
+        chrome.downloads.onChanged.removeListener(listener);
+        resolve();
+      } else if (delta.state.current === "interrupted") {
+        clearTimeout(timer);
+        chrome.downloads.onChanged.removeListener(listener);
+        reject(new Error("Download failed"));
+      }
+    };
+    chrome.downloads.onChanged.addListener(listener);
+  });
 }
 
 async function openServiceTab(settings) {
@@ -403,8 +695,9 @@ async function openServiceTab(settings) {
   try {
     const tabs = await chrome.tabs.query({ url: svc.match });
     if (tabs.length && tabs[0].id) {
-      // Send the tab to the app home so the drop flow starts from a known spot
-      const props = silent ? { url: svc.appUrl } : { url: svc.appUrl, active: true };
+      const props = silent
+        ? { url: svc.appUrl }
+        : { url: svc.appUrl, active: true };
       await chrome.tabs.update(tabs[0].id, props);
       if (!silent && tabs[0].windowId) {
         try {
