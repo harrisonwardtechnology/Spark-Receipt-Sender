@@ -1,4 +1,5 @@
 const DEFAULTS = {
+  service: "sparkreceipt",
   sparkEmail: "",
   destination: "autodrop",
   format: "pdf",
@@ -8,21 +9,29 @@ const DEFAULTS = {
   silent: false
 };
 
+const SERVICE_NAMES = {
+  sparkreceipt: "SparkReceipt",
+  expensify: "Expensify"
+};
+
 document.addEventListener("DOMContentLoaded", async () => {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const settings = { ...DEFAULTS, ...stored };
+  if (settings.destination === "sparkweb") settings.destination = "serviceweb";
 
   document.getElementById("pageTitle").textContent =
     tab && tab.title ? tab.title : "This page";
-  document.getElementById("plan").textContent = planText(settings);
 
-  if (
-    (settings.destination === "gmail" || settings.destination === "mailto") &&
-    !settings.sparkEmail
-  ) {
-    document.getElementById("emailHint").style.display = "block";
-  }
+  const serviceSelect = document.getElementById("service");
+  serviceSelect.value = settings.service;
+  serviceSelect.addEventListener("change", async () => {
+    settings.service = serviceSelect.value;
+    await chrome.storage.sync.set({ service: settings.service });
+    refresh(settings);
+  });
+
+  refresh(settings);
 
   document.getElementById("sendBtn").addEventListener("click", async () => {
     const btn = document.getElementById("sendBtn");
@@ -42,15 +51,27 @@ document.addEventListener("DOMContentLoaded", async () => {
   });
 });
 
+function refresh(settings) {
+  document.getElementById("plan").textContent = planText(settings);
+  const needsEmail =
+    (settings.destination === "gmail" || settings.destination === "mailto") &&
+    settings.service === "sparkreceipt" &&
+    !settings.sparkEmail;
+  document.getElementById("emailHint").style.display = needsEmail
+    ? "block"
+    : "none";
+}
+
 function planText(s) {
+  const svc = SERVICE_NAMES[s.service] || "SparkReceipt";
   const what = s.format === "pdf" ? "full page PDF" : "screenshot";
   const dest =
     {
-      autodrop: "then drops it into SparkReceipt for you.",
-      sparkweb: "then opens SparkReceipt so you can drop it in.",
-      gmail: "then opens a Gmail draft to your SparkReceipt address.",
-      mailto: "then opens an email draft to your SparkReceipt address.",
-      none: "and saves it to Downloads/SparkReceipt."
+      autodrop: "then drops it into " + svc + " for you.",
+      serviceweb: "then opens " + svc + " so you can drop it in.",
+      gmail: "then opens a Gmail draft to your " + svc + " address.",
+      mailto: "then opens an email draft to your " + svc + " address.",
+      none: "and saves it to Downloads/Receipts."
     }[s.destination] || "";
   return "Saves this page as a " + what + " " + dest;
 }

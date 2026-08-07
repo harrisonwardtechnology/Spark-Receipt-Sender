@@ -1,4 +1,5 @@
 const DEFAULTS = {
+  service: "sparkreceipt",
   sparkEmail: "",
   destination: "autodrop",
   format: "pdf",
@@ -11,7 +12,12 @@ const DEFAULTS = {
 document.addEventListener("DOMContentLoaded", async () => {
   const stored = await chrome.storage.sync.get(DEFAULTS);
   const s = { ...DEFAULTS, ...stored };
+  if (s.destination === "sparkweb") s.destination = "serviceweb";
 
+  const serviceInput = document.querySelector(
+    'input[name="service"][value="' + s.service + '"]'
+  );
+  if (serviceInput) serviceInput.checked = true;
   document.getElementById("sparkEmail").value = s.sparkEmail;
   const destInput = document.querySelector(
     'input[name="destination"][value="' + s.destination + '"]'
@@ -27,11 +33,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.getElementById("silent").checked = !!s.silent;
 
   document.getElementById("save").addEventListener("click", async () => {
+    const service = document.querySelector('input[name="service"]:checked');
     const destination = document.querySelector(
       'input[name="destination"]:checked'
     );
     const format = document.querySelector('input[name="format"]:checked');
     const settings = {
+      service: service ? service.value : DEFAULTS.service,
       sparkEmail: document.getElementById("sparkEmail").value.trim(),
       destination: destination ? destination.value : DEFAULTS.destination,
       format: format ? format.value : DEFAULTS.format,

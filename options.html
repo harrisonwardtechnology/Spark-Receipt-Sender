@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>Send to SparkReceipt - Settings</title>
+  <title>Receipt Sender - Settings</title>
   <style>
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
@@ -82,8 +82,13 @@
 </head>
 <body>
   <div class="card">
-    <h1>Send to SparkReceipt</h1>
+    <h1>Receipt Sender</h1>
     <p class="sub">Set this up once. After that it is one click per receipt.</p>
+
+    <label class="field">Send receipts to</label>
+    <label class="choice"><input type="radio" name="service" value="sparkreceipt" />SparkReceipt</label>
+    <label class="choice"><input type="radio" name="service" value="expensify" />Expensify</label>
+    <p class="hint">You can also flip this per grab right in the toolbar popup. Expensify email drafts go to receipts@expensify.com and must be sent from your Expensify login email.</p>
 
     <label class="field" for="sparkEmail">Your SparkReceipt forwarding email</label>
     <input type="email" id="sparkEmail" placeholder="something@sparkreceipt address" />
@@ -94,9 +99,9 @@
     </p>
 
     <label class="field">After grabbing the page</label>
-    <label class="choice"><input type="radio" name="destination" value="autodrop" />Drop it into SparkReceipt for me (automatic)</label>
-    <label class="choice"><input type="radio" name="destination" value="sparkweb" />Open SparkReceipt so I can drop the file in myself</label>
-    <label class="choice"><input type="radio" name="destination" value="gmail" />Open a Gmail draft to my SparkReceipt address</label>
+    <label class="choice"><input type="radio" name="destination" value="autodrop" />Drop it in for me (automatic)</label>
+    <label class="choice"><input type="radio" name="destination" value="serviceweb" />Open the service so I can drop the file in myself</label>
+    <label class="choice"><input type="radio" name="destination" value="gmail" />Open a Gmail draft to the right receipt address</label>
     <label class="choice"><input type="radio" name="destination" value="mailto" />Open my regular mail app instead of Gmail</label>
     <label class="choice"><input type="radio" name="destination" value="none" />Just save the file, nothing else</label>
 
@@ -106,10 +111,10 @@
 
     <label class="field">Extras</label>
     <label class="choice"><input type="checkbox" id="reveal" />Pop open the folder after saving (handy for manual dragging)</label>
-    <label class="choice"><input type="checkbox" id="closeTab" />Close the SparkReceipt tab once the upload finishes</label>
+    <label class="choice"><input type="checkbox" id="closeTab" />Close the service tab once the upload finishes</label>
     <label class="choice"><input type="checkbox" id="deleteLocal" />Delete the backup file once the upload finishes</label>
     <label class="choice"><input type="checkbox" id="silent" />Silent mode: do the drop in a background tab so you stay where you are</label>
-    <p class="hint">A backup copy of every grab lands in Downloads/SparkReceipt. The two cleanup options above only kick in after a fully successful automatic drop. If a drop ever misses, the tab stays open and the file stays put so you can finish by hand.</p>
+    <p class="hint">A backup copy of every grab lands in Downloads/Receipts. The two cleanup options above only kick in after a fully successful automatic drop. If a drop ever misses, the tab stays open and the file stays put so you can finish by hand.</p>
 
     <button id="save">Save</button>
     <span id="status"></span>

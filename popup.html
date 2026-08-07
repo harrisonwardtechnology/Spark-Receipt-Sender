@@ -18,10 +18,28 @@
     #pageTitle {
       font-size: 12px;
       color: #6b7280;
-      margin: 0 0 12px 0;
+      margin: 0 0 10px 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+    #serviceRow {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 0 0 10px 0;
+    }
+    #serviceRow label {
+      font-size: 12px;
+      color: #6b7280;
+    }
+    #service {
+      flex: 1;
+      font-size: 12px;
+      padding: 5px 6px;
+      border: 1px solid #d1d5db;
+      border-radius: 6px;
+      background: #ffffff;
     }
     #sendBtn {
       width: 100%;
@@ -69,8 +87,15 @@
   </style>
 </head>
 <body>
-  <h1>Send to SparkReceipt</h1>
+  <h1>Receipt Sender</h1>
   <p id="pageTitle">This page</p>
+  <div id="serviceRow">
+    <label for="service">Send to</label>
+    <select id="service">
+      <option value="sparkreceipt">SparkReceipt</option>
+      <option value="expensify">Expensify</option>
+    </select>
+  </div>
   <button id="sendBtn">Grab this page</button>
   <p id="plan"></p>
   <p id="emailHint">Heads up: no SparkReceipt email saved yet. Add it in Settings so the draft is addressed for you.</p>

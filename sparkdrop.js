@@ -12,6 +12,7 @@
     return;
   }
   if (!payload || !payload.b64) return;
+  if (payload.service && payload.service !== "sparkreceipt") return;
 
   let file;
   try {
@@ -36,7 +37,7 @@
     if (document.querySelector('input[type="password"]')) {
       if (elapsed > 180000) {
         finish(
-          "Log in first. Your receipt is saved in Downloads/SparkReceipt."
+          "Log in first. Your receipt is saved in Downloads/Receipts."
         );
       } else {
         showBanner("Log in and I will drop the receipt in...");
@@ -46,7 +47,7 @@
 
     if (elapsed > 60000) {
       finish(
-        "Could not finish the drop. Drag the file from Downloads/SparkReceipt instead."
+        "Could not finish the drop. Drag the file from Downloads/Receipts instead."
       );
       return;
     }

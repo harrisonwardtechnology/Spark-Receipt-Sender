@@ -1,41 +1,81 @@
-// Send to SparkReceipt - background service worker
+// Receipt Sender - background service worker
+// Sends captured pages and images to SparkReceipt or Expensify.
 
 const DEFAULTS = {
+  service: "sparkreceipt", // sparkreceipt | expensify
   sparkEmail: "",
-  destination: "autodrop", // autodrop | sparkweb | gmail | mailto | none
+  destination: "autodrop", // autodrop | serviceweb | gmail | mailto | none
   format: "pdf", // pdf | png
   reveal: false,
-  closeTab: false, // close the SparkReceipt tab after a successful upload
+  closeTab: false, // close the service tab after a successful upload
   deleteLocal: false, // delete the backup file after a successful upload
   silent: false // do the drop in a background tab without stealing focus
 };
 
-const SPARK_APP_URL = "https://app.sparkreceipt.com/";
+const SERVICES = {
+  sparkreceipt: {
+    name: "SparkReceipt",
+    appUrl: "https://app.sparkreceipt.com/",
+    match: "https://app.sparkreceipt.com/*",
+    email: null // uses settings.sparkEmail
+  },
+  expensify: {
+    name: "Expensify",
+    appUrl: "https://new.expensify.com/",
+    match: "https://new.expensify.com/*",
+    email: "receipts@expensify.com"
+  }
+};
+
 const PENDING_MAX_AGE_MS = 3 * 60 * 1000;
 
-chrome.runtime.onInstalled.addListener((details) => {
+function getService(settings) {
+  return SERVICES[settings.service] || SERVICES.sparkreceipt;
+}
+
+async function loadSettings() {
+  const stored = await chrome.storage.sync.get(DEFAULTS);
+  const settings = { ...DEFAULTS, ...stored };
+  // Migrate the old "sparkweb" destination name
+  if (settings.destination === "sparkweb") settings.destination = "serviceweb";
+  return settings;
+}
+
+async function refreshMenus() {
+  const settings = await loadSettings();
+  const label = getService(settings).name;
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
-      id: "send-to-spark",
-      title: "Send page to SparkReceipt",
+      id: "send-to-service",
+      title: "Send page to " + label,
       contexts: ["page"]
     });
     chrome.contextMenus.create({
-      id: "send-image-to-spark",
-      title: "Send this image to SparkReceipt",
+      id: "send-image-to-service",
+      title: "Send this image to " + label,
       contexts: ["image"]
     });
   });
+}
+
+chrome.runtime.onInstalled.addListener((details) => {
+  refreshMenus();
   if (details.reason === "install") {
     chrome.runtime.openOptionsPage();
   }
 });
 
+chrome.storage.onChanged.addListener((changes, area) => {
+  if (area === "sync" && changes.service) {
+    refreshMenus();
+  }
+});
+
 chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (!tab || !tab.id) return;
-  if (info.menuItemId === "send-to-spark") {
+  if (info.menuItemId === "send-to-service") {
     run(tab);
-  } else if (info.menuItemId === "send-image-to-spark" && info.srcUrl) {
+  } else if (info.menuItemId === "send-image-to-service" && info.srcUrl) {
     runImage(tab, info.srcUrl);
   }
 });
@@ -94,8 +134,7 @@ async function handleDropFinished(msg, sender) {
     msg.success ? "#188038" : "#d93025"
   );
   if (!msg.success) return;
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  const settings = { ...DEFAULTS, ...stored };
+  const settings = await loadSettings();
 
   if (settings.deleteLocal) {
     try {
@@ -130,27 +169,25 @@ async function handleDropFinished(msg, sender) {
 }
 
 async function run(tab) {
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  const settings = { ...DEFAULTS, ...stored };
+  const settings = await loadSettings();
   await setBadge("...", "#5f6368");
   try {
     const capture = await capturePage(tab, settings.format);
     await deliver(tab, settings, capture);
   } catch (e) {
-    console.error("Send to SparkReceipt failed:", e);
+    console.error("Receipt Sender failed:", e);
     await flashBadge("!", "#d93025");
   }
 }
 
 async function runImage(tab, srcUrl) {
-  const stored = await chrome.storage.sync.get(DEFAULTS);
-  const settings = { ...DEFAULTS, ...stored };
+  const settings = await loadSettings();
   await setBadge("...", "#5f6368");
   try {
     const capture = await fetchImageAsDataUrl(srcUrl);
     await deliver(tab, settings, capture);
   } catch (e) {
-    console.error("Send image to SparkReceipt failed:", e);
+    console.error("Receipt Sender image failed:", e);
     await flashBadge("!", "#d93025");
   }
 }
@@ -158,7 +195,7 @@ async function runImage(tab, srcUrl) {
 async function deliver(tab, settings, capture) {
   const filename = buildFilename(tab, capture.ext);
 
-  // Always keep a copy in Downloads/SparkReceipt as a safety net
+  // Always keep a copy in Downloads/Receipts as a safety net
   const downloadId = await chrome.downloads.download({
     url: capture.url,
     filename: filename,
@@ -254,7 +291,7 @@ async function printToPdf(tabId) {
 }
 
 function buildFilename(tab, ext) {
-  return "SparkReceipt/" + crypto.randomUUID() + "." + ext;
+  return "Receipts/" + crypto.randomUUID() + "." + ext;
 }
 
 function waitForDownload(downloadId) {
@@ -279,13 +316,18 @@ function waitForDownload(downloadId) {
   });
 }
 
+function emailFor(settings) {
+  const svc = getService(settings);
+  return svc.email || settings.sparkEmail || "";
+}
+
 async function openDestination(tab, settings, capture, filename, downloadId) {
   const title = tab.title || "Receipt";
   const subject = "Receipt: " + title;
   const body =
     "Receipt captured from " +
     tab.url +
-    "\n\nAttach the newest file from Downloads/SparkReceipt before sending.";
+    "\n\nAttach the newest file from Downloads/Receipts before sending.";
 
   if (settings.destination === "autodrop") {
     const handedOff = await stashPendingReceipt(
@@ -294,18 +336,18 @@ async function openDestination(tab, settings, capture, filename, downloadId) {
       settings,
       downloadId
     );
-    await openSparkTab(settings);
+    await openServiceTab(settings);
     if (!handedOff) {
       console.warn(
-        "Receipt too large for auto-drop. It is saved in Downloads/SparkReceipt."
+        "Receipt too large for auto-drop. It is saved in Downloads/Receipts."
       );
     }
-  } else if (settings.destination === "sparkweb") {
-    await chrome.tabs.create({ url: SPARK_APP_URL });
+  } else if (settings.destination === "serviceweb") {
+    await chrome.tabs.create({ url: getService(settings).appUrl });
   } else if (settings.destination === "gmail") {
     const url =
       "https://mail.google.com/mail/?view=cm&fs=1&to=" +
-      encodeURIComponent(settings.sparkEmail || "") +
+      encodeURIComponent(emailFor(settings)) +
       "&su=" +
       encodeURIComponent(subject) +
       "&body=" +
@@ -314,7 +356,7 @@ async function openDestination(tab, settings, capture, filename, downloadId) {
   } else if (settings.destination === "mailto") {
     const url =
       "mailto:" +
-      encodeURIComponent(settings.sparkEmail || "") +
+      encodeURIComponent(emailFor(settings)) +
       "?subject=" +
       encodeURIComponent(subject) +
       "&body=" +
@@ -338,6 +380,7 @@ async function stashPendingReceipt(capture, filename, settings, downloadId) {
     const base = filename.split("/").pop();
     await chrome.storage.session.set({
       pending: {
+        service: settings.service,
         b64: b64,
         mime: mime,
         filename: base,
@@ -354,15 +397,14 @@ async function stashPendingReceipt(capture, filename, settings, downloadId) {
   }
 }
 
-async function openSparkTab(settings) {
-  const silent = !!(settings && settings.silent);
+async function openServiceTab(settings) {
+  const svc = getService(settings);
+  const silent = !!settings.silent;
   try {
-    const tabs = await chrome.tabs.query({ url: SPARK_APP_URL + "*" });
+    const tabs = await chrome.tabs.query({ url: svc.match });
     if (tabs.length && tabs[0].id) {
       // Send the tab to the app home so the drop flow starts from a known spot
-      const props = silent
-        ? { url: SPARK_APP_URL }
-        : { url: SPARK_APP_URL, active: true };
+      const props = silent ? { url: svc.appUrl } : { url: svc.appUrl, active: true };
       await chrome.tabs.update(tabs[0].id, props);
       if (!silent && tabs[0].windowId) {
         try {
@@ -376,7 +418,7 @@ async function openSparkTab(settings) {
   } catch (e) {
     // fall through to creating a tab
   }
-  await chrome.tabs.create({ url: SPARK_APP_URL, active: !silent });
+  await chrome.tabs.create({ url: svc.appUrl, active: !silent });
 }
 
 async function setBadge(text, color) {
