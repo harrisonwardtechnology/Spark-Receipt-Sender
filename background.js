@@ -4,6 +4,22 @@
 // scrolling and stitching screenshots. Broad site access is optional and only
 // requested for batch mode.
 
+// Activity Log: a local audit trail of each step. It is extra, never required.
+// If it fails to load, grabs carry on exactly as before.
+try {
+  importScripts("activitylog.js");
+} catch (e) {
+  console.warn("Receipt Sender: Activity Log is unavailable", e);
+}
+
+function logEvent(step, fields) {
+  try {
+    if (typeof ActivityLog !== "undefined") ActivityLog.record(step, fields);
+  } catch (e) {
+    // logging must never get in the way of a grab
+  }
+}
+
 const DEFAULTS = {
   service: "sparkreceipt", // sparkreceipt | expensify
   sparkType: "expense", // expense | income | statement | other
@@ -55,12 +71,12 @@ async function refreshMenus() {
   chrome.contextMenus.removeAll(() => {
     chrome.contextMenus.create({
       id: "send-to-service",
-      title: "Send page to " + label,
+      title: "Send Page to " + label,
       contexts: ["page"]
     });
     chrome.contextMenus.create({
       id: "send-image-to-service",
-      title: "Send this image to " + label,
+      title: "Send This Image to " + label,
       contexts: ["image"]
     });
   });
@@ -76,6 +92,9 @@ chrome.runtime.onInstalled.addListener((details) => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "sync" && changes.service) {
     refreshMenus();
+  }
+  if (area === "sync") {
+    logEvent("settings_changed", { detail: settingNames(changes) });
   }
 });
 
@@ -98,6 +117,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (!msg) return false;
 
   if (msg.type === "send" && msg.tabId) {
+    if (fromWebPage(sender)) return false;
     chrome.tabs
       .get(msg.tabId)
       .then(run)
@@ -107,6 +127,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "sendAllTabs" && msg.windowId) {
+    if (fromWebPage(sender)) return false;
     runBatch(msg.windowId).catch((e) => console.error(e));
     sendResponse({ ok: true });
     return false;
@@ -133,8 +154,65 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
 
+  if (msg.type === "logStep") {
+    noteServiceStep(msg, sender);
+    return false;
+  }
+
+  if (msg.type === "clearActivityLog") {
+    if (fromWebPage(sender) || typeof ActivityLog === "undefined") {
+      sendResponse({ ok: false });
+      return false;
+    }
+    ActivityLog.clear()
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true;
+  }
+
   return false;
 });
+
+// Grabs and log clearing are started from the extension's own pages (the
+// popup and the settings page), never from a script running in a web page.
+function fromWebPage(sender) {
+  try {
+    return !!(
+      sender &&
+      typeof sender.url === "string" &&
+      /^https?:/i.test(sender.url)
+    );
+  } catch (e) {
+    return false;
+  }
+}
+
+// The service page scripts report a few plain steps for the Activity Log.
+// Only known steps from the two service sites are kept.
+const PAGE_STEPS = [
+  "receipt_picked_up",
+  "sign_in_needed",
+  "file_attached",
+  "service_note"
+];
+
+function noteServiceStep(msg, sender) {
+  try {
+    if (PAGE_STEPS.indexOf(msg.step) === -1) return;
+    const url = (sender && typeof sender.url === "string" && sender.url) || "";
+    let service = null;
+    if (url.startsWith(SERVICES.sparkreceipt.appUrl)) service = "sparkreceipt";
+    if (url.startsWith(SERVICES.expensify.appUrl)) service = "expensify";
+    if (!service) return;
+    logEvent(msg.step, {
+      grabId: msg.grabId,
+      service: service,
+      detail: typeof msg.note === "string" ? msg.note : undefined
+    });
+  } catch (e) {
+    // logging must never get in the way of a grab
+  }
+}
 
 // ---------- queue ----------
 
@@ -179,11 +257,17 @@ async function handleDropFinished(msg, sender) {
   const settings = await loadSettings();
   const queue = await getQueue();
 
+  logEvent(msg.success ? "upload_confirmed" : "upload_missed", {
+    grabId: inFlight ? inFlight.id : undefined,
+    service: inFlight ? inFlight.service : undefined
+  });
+
   if (inFlight) {
     await historyUpdate(inFlight.id, msg.success ? "ok" : "fail");
     if (msg.success && settings.deleteLocal && typeof inFlight.downloadId === "number") {
       try {
         await chrome.downloads.removeFile(inFlight.downloadId);
+        logEvent("backup_deleted", { grabId: inFlight.id });
       } catch (e) {
         // file already gone
       }
@@ -205,6 +289,7 @@ async function handleDropFinished(msg, sender) {
   if (msg.success && settings.closeTab && sender && sender.tab && sender.tab.id) {
     try {
       await chrome.tabs.remove(sender.tab.id);
+      logEvent("tab_closed", { service: settings.service });
     } catch (e) {
       // tab already closed
     }
@@ -243,11 +328,18 @@ async function run(tab) {
     service: settings.service,
     status: "working"
   });
+  logEvent("grab_started", {
+    grabId: entryId,
+    host: hostOf(tab.url),
+    service: settings.service,
+    detail: "Page"
+  });
   try {
     const capture = await capturePage(tab, settings.format);
     await deliver(tab, settings, capture, entryId);
   } catch (e) {
     console.error("Receipt Sender failed:", e);
+    logEvent("grab_failed", { grabId: entryId, detail: reasonOf(e) });
     await historyUpdate(entryId, "fail");
     await flashBadge("!", "#d93025");
   }
@@ -264,11 +356,18 @@ async function runImage(tab, srcUrl) {
     service: settings.service,
     status: "working"
   });
+  logEvent("grab_started", {
+    grabId: entryId,
+    host: hostOf(tab.url),
+    service: settings.service,
+    detail: "Image"
+  });
   try {
     const capture = await captureImage(tab, srcUrl);
     await deliver(tab, settings, capture, entryId);
   } catch (e) {
     console.error("Receipt Sender image failed:", e);
+    logEvent("grab_failed", { grabId: entryId, detail: reasonOf(e) });
     await historyUpdate(entryId, "fail");
     await flashBadge("!", "#d93025");
   }
@@ -288,9 +387,14 @@ async function runBatch(windowId) {
       !t.url.startsWith(SERVICES.expensify.appUrl)
   );
   if (!targets.length) {
+    logEvent("grab_failed", { detail: "Grab All Tabs found no web pages" });
     await flashBadge("0", "#d93025");
     return;
   }
+  logEvent("batch_started", {
+    service: settings.service,
+    detail: tabCount(targets.length)
+  });
 
   for (let i = 0; i < targets.length; i++) {
     const tab = targets[i];
@@ -303,6 +407,12 @@ async function runBatch(windowId) {
       service: settings.service,
       status: "working"
     });
+    logEvent("grab_started", {
+      grabId: entryId,
+      host: hostOf(tab.url),
+      service: settings.service,
+      detail: "Page " + (i + 1) + " of " + targets.length
+    });
     try {
       await chrome.tabs.update(tab.id, { active: true });
       await sleep(500);
@@ -311,6 +421,7 @@ async function runBatch(windowId) {
       await deliver(fresh, settings, capture, entryId, true);
     } catch (e) {
       console.warn("Batch grab failed for tab", tab.url, e);
+      logEvent("grab_failed", { grabId: entryId, detail: reasonOf(e) });
       await historyUpdate(entryId, "fail");
     }
   }
@@ -318,6 +429,10 @@ async function runBatch(windowId) {
   if (settings.destination === "autodrop") {
     await openServiceTab(settings);
   }
+  logEvent("batch_finished", {
+    service: settings.service,
+    detail: tabCount(targets.length)
+  });
   await flashBadge("OK", "#188038");
 }
 
@@ -334,6 +449,7 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
     conflictAction: "uniquify"
   });
   await waitForDownload(downloadId);
+  logEvent("file_saved", { grabId: entryId, detail: filename });
 
   if (
     settings.reveal &&
@@ -349,11 +465,17 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
 
   if (settings.destination === "autodrop") {
     await enqueueCapture(capture, filename, settings, downloadId, entryId);
+    logEvent("receipt_queued", { grabId: entryId, service: settings.service });
     if (!batchMode) {
       await openServiceTab(settings);
     }
   } else {
     await openDestination(tab, settings);
+    logEvent(settings.destination === "none" ? "saved_only" : "handoff_opened", {
+      grabId: entryId,
+      service: settings.service,
+      detail: handoffText(settings.destination)
+    });
     await historyUpdate(entryId, "saved");
     await flashBadge("OK", "#188038");
   }
@@ -612,7 +734,7 @@ async function captureImage(tab, srcUrl) {
   });
   const rect = rectRes && rectRes.result;
   if (!rect || rect.w < 4 || rect.h < 4) {
-    throw new Error("Could not reach that image");
+    throw new Error("Couldn't reach that image");
   }
   await sleep(400);
   const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
@@ -663,6 +785,55 @@ function buildFilename(ext) {
   return "Receipts/" + crypto.randomUUID() + "." + ext;
 }
 
+// ---------- Activity Log wording (never throws) ----------
+
+function reasonOf(e) {
+  try {
+    return e && e.message ? String(e.message) : String(e);
+  } catch (err) {
+    return "Unknown problem";
+  }
+}
+
+function tabCount(n) {
+  return n === 1 ? "1 tab" : n + " tabs";
+}
+
+function handoffText(destination) {
+  return (
+    {
+      serviceweb: "Service opened for a manual drop",
+      gmail: "Gmail draft",
+      mailto: "Mail app draft",
+      none: "Backup file only"
+    }[destination] || ""
+  );
+}
+
+// Names of the settings that changed. Values are never logged.
+function settingNames(changes) {
+  try {
+    const names = {
+      service: "service",
+      sparkType: "document type",
+      sparkEmail: "forwarding email",
+      destination: "after grabbing",
+      format: "save as",
+      reveal: "open folder",
+      closeTab: "close tab",
+      deleteLocal: "delete backup",
+      silent: "silent mode"
+    };
+    return Object.keys(changes)
+      .map((k) => names[k])
+      .filter(Boolean)
+      .sort()
+      .join(", ");
+  } catch (e) {
+    return "";
+  }
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -692,6 +863,10 @@ function waitForDownload(downloadId) {
 async function openServiceTab(settings) {
   const svc = getService(settings);
   const silent = !!settings.silent;
+  logEvent("service_opened", {
+    service: settings.service,
+    detail: silent ? "Background tab" : "Front tab"
+  });
   try {
     const tabs = await chrome.tabs.query({ url: svc.match });
     if (tabs.length && tabs[0].id) {

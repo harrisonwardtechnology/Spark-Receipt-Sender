@@ -26,10 +26,12 @@
   }
 
   showBanner("Dropping your receipt into Expensify...");
+  logStep("receipt_picked_up");
 
   const start = Date.now();
   let stage = "entry"; // entry -> menu -> attach -> submit
   let attachedAt = 0;
+  let signInLogged = false; // Activity Log only
 
   const timer = setInterval(() => {
     const elapsed = Date.now() - start;
@@ -37,16 +39,20 @@
     // Login screen up? Wait for it. The flow restarts after login.
     if (isLoginScreen()) {
       if (elapsed > 180000) {
-        finish("Log in first. Your receipt is saved in Downloads/Receipts.");
+        finish("Sign in first. Your receipt is saved in Downloads/Receipts.");
       } else {
-        showBanner("Log in and I will drop the receipt in...");
+        showBanner("Sign in and I'll drop the receipt in...");
+        if (!signInLogged) {
+          signInLogged = true;
+          logStep("sign_in_needed");
+        }
       }
       return;
     }
 
     if (elapsed > 75000) {
       finish(
-        "Could not finish the drop. Drag the file from Downloads/Receipts instead."
+        "Couldn't finish the drop. Drag the file in from Downloads/Receipts instead."
       );
       return;
     }
@@ -112,6 +118,7 @@
         attachedAt = Date.now();
         stage = "submit";
         showBanner("Receipt attached, creating the expense...");
+        logStep("file_attached");
       } else if (stage === "submit") {
         // Give the app a moment to build the confirmation screen
         if (Date.now() - attachedAt < 1200) return;
@@ -197,6 +204,24 @@
     } else {
       sendFinished(!!success);
     }
+    logStep("service_note", message);
+  }
+
+  // Activity Log only: tell the extension about a step. Never waits, never
+  // throws, and has no say in the upload itself.
+  function logStep(step, note) {
+    try {
+      chrome.runtime
+        .sendMessage({
+          type: "logStep",
+          step: step,
+          grabId: payload.id,
+          note: note
+        })
+        .catch(() => {});
+    } catch (e) {
+      // extension context gone, nothing to do
+    }
   }
 
   function sendFinished(ok) {
@@ -235,6 +260,7 @@
     if (!el) {
       el = document.createElement("div");
       el.id = "spark-sender-banner";
+      el.setAttribute("role", "status");
       el.style.cssText =
         "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
         "max-width:300px;padding:12px 36px 12px 14px;border-radius:10px;" +

@@ -25,10 +25,12 @@
   }
 
   showBanner("Dropping your receipt into SparkReceipt...");
+  logStep("receipt_picked_up");
 
   const start = Date.now();
   let stage = "openMenu"; // openMenu -> pickType -> attach -> confirm
   let attachedAt = 0;
+  let signInLogged = false; // Activity Log only
 
   const timer = setInterval(() => {
     const elapsed = Date.now() - start;
@@ -37,17 +39,21 @@
     if (document.querySelector('input[type="password"]')) {
       if (elapsed > 180000) {
         finish(
-          "Log in first. Your receipt is saved in Downloads/Receipts."
+          "Sign in first. Your receipt is saved in Downloads/Receipts."
         );
       } else {
-        showBanner("Log in and I will drop the receipt in...");
+        showBanner("Sign in and I'll drop the receipt in...");
+        if (!signInLogged) {
+          signInLogged = true;
+          logStep("sign_in_needed");
+        }
       }
       return;
     }
 
     if (elapsed > 60000) {
       finish(
-        "Could not finish the drop. Drag the file from Downloads/Receipts instead."
+        "Couldn't finish the drop. Drag the file in from Downloads/Receipts instead."
       );
       return;
     }
@@ -88,6 +94,7 @@
           attachedAt = Date.now();
           stage = "confirm";
           showBanner("Receipt attached, confirming...");
+          logStep("file_attached");
         }
       } else if (stage === "confirm") {
         // Give the app a moment to register the file before confirming
@@ -97,7 +104,7 @@
           confirm.click();
           finish("Receipt dropped in. SparkReceipt is scanning it now.", true);
         } else if (Date.now() - attachedAt > 15000) {
-          finish("Receipt attached. Hit Confirm in SparkReceipt to finish.");
+          finish("Receipt attached. Click Confirm in SparkReceipt to finish.");
         }
       }
     } catch (e) {
@@ -162,6 +169,24 @@
     } else {
       sendFinished(!!success);
     }
+    logStep("service_note", message);
+  }
+
+  // Activity Log only: tell the extension about a step. Never waits, never
+  // throws, and has no say in the upload itself.
+  function logStep(step, note) {
+    try {
+      chrome.runtime
+        .sendMessage({
+          type: "logStep",
+          step: step,
+          grabId: payload.id,
+          note: note
+        })
+        .catch(() => {});
+    } catch (e) {
+      // extension context gone, nothing to do
+    }
   }
 
   function sendFinished(ok) {
@@ -201,10 +226,11 @@
     if (!el) {
       el = document.createElement("div");
       el.id = "spark-sender-banner";
+      el.setAttribute("role", "status");
       el.style.cssText =
         "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
         "max-width:300px;padding:12px 36px 12px 14px;border-radius:10px;" +
-        "background:#0d9488;color:#ffffff;font:13px/1.45 -apple-system," +
+        "background:#0f766e;color:#ffffff;font:13px/1.45 -apple-system," +
         "BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;" +
         "box-shadow:0 4px 14px rgba(0,0,0,0.25);";
       const close = document.createElement("span");
