@@ -1,124 +1,374 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Receipt Sender - Settings</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Receipt Sender Settings</title>
+  <link rel="icon" href="icons/icon32.png" />
+  <link rel="stylesheet" href="theme.css" />
   <style>
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      max-width: 520px;
-      margin: 40px auto;
-      padding: 0 20px;
-      color: #1f2937;
-      background: #f9fafb;
+    html {
+      /* Keep the focused control clear of the Save bar at the bottom */
+      scroll-padding-bottom: 88px;
     }
-    .card {
-      background: #ffffff;
-      border: 1px solid #e5e7eb;
-      border-radius: 12px;
-      padding: 24px;
+    body {
+      font-size: 15px;
+    }
+    .page {
+      max-width: 1240px;
+      margin: 0 auto;
+      padding: 32px 24px 24px;
+    }
+    .masthead {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      margin: 0 0 24px;
+    }
+    .masthead img {
+      flex: none;
+      border-radius: 11px;
     }
     h1 {
-      font-size: 18px;
-      margin: 0 0 4px 0;
+      font-size: 24px;
+      line-height: 1.2;
+      letter-spacing: -0.02em;
+      margin: 0;
     }
     .sub {
-      font-size: 13px;
-      color: #6b7280;
-      margin: 0 0 20px 0;
+      margin: 2px 0 0;
+      color: var(--muted);
     }
-    label.field {
+    .grid {
+      display: grid;
+      gap: 24px;
+      align-items: start;
+    }
+    @media (min-width: 1000px) {
+      .grid {
+        grid-template-columns: minmax(0, 4fr) minmax(0, 5fr);
+      }
+      .log {
+        position: sticky;
+        top: 24px;
+      }
+    }
+    .stack {
+      display: grid;
+      gap: 16px;
+    }
+    .card {
+      min-width: 0;
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      padding: 18px 20px;
+      box-shadow: var(--shadow);
+    }
+    fieldset {
+      margin: 0;
+      padding: 0;
+      border: 0;
+      min-width: 0;
+    }
+    legend,
+    .card h2,
+    label.title {
       display: block;
-      font-size: 13px;
-      font-weight: 600;
-      margin: 18px 0 6px 0;
-    }
-    input[type="email"] {
-      width: 100%;
-      box-sizing: border-box;
-      padding: 9px 10px;
-      font-size: 13px;
-      border: 1px solid #d1d5db;
-      border-radius: 8px;
-    }
-    .hint {
-      font-size: 12px;
-      color: #6b7280;
-      margin: 6px 0 0 0;
-      line-height: 1.5;
-    }
-    .hint a {
-      color: #0d9488;
+      padding: 0;
+      margin: 0 0 6px;
+      font-size: 15px;
+      font-weight: 650;
+      line-height: 1.3;
     }
     .choice {
-      display: block;
-      font-size: 13px;
-      margin: 6px 0;
-    }
-    .choice input {
-      margin-right: 8px;
-    }
-    #save {
-      margin-top: 22px;
-      padding: 10px 22px;
-      font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
-      background: #0d9488;
-      border: none;
-      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-height: 44px;
+      padding: 6px 8px;
+      margin: 0 -8px;
+      border-radius: 10px;
       cursor: pointer;
     }
-    #save:hover {
-      background: #0f766e;
+    .choice:hover {
+      background: var(--paper);
+    }
+    .choice input {
+      flex: none;
+      width: 18px;
+      height: 18px;
+      margin: 0;
+    }
+    .choice span {
+      display: block;
+      min-width: 0;
+    }
+    .choice strong {
+      display: block;
+      font-weight: 550;
+      line-height: 1.3;
+    }
+    .choice small {
+      display: block;
+      font-size: 13px;
+      line-height: 1.4;
+      color: var(--muted);
+    }
+    .hint {
+      margin: 8px 0 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--muted);
+    }
+    .savebar {
+      position: sticky;
+      bottom: 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 12px 0;
+      background: var(--bg);
+      border-top: 1px solid var(--line);
+    }
+    #save {
+      min-width: 120px;
     }
     #status {
-      display: inline-block;
-      margin-left: 10px;
+      font-size: 14px;
+      font-weight: 550;
+      color: var(--good);
+    }
+
+    /* Activity Log */
+    .loghead {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px 12px;
+    }
+    .loghead h2 {
+      margin: 0;
+    }
+    .logactions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .logactions .btn {
+      min-height: 44px;
+      padding: 0 14px;
       font-size: 13px;
-      color: #188038;
+    }
+    #logCount {
+      min-height: 20px;
+      margin: 10px 0 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .logscroll {
+      max-height: min(560px, calc(100vh - 385px));
+      min-height: 120px;
+      overflow: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    th,
+    td {
+      padding: 8px 10px;
+      text-align: left;
+      vertical-align: top;
+      border-bottom: 1px solid var(--line);
+    }
+    tbody tr:last-child td {
+      border-bottom: 0;
+    }
+    th {
+      position: sticky;
+      top: 0;
+      font-weight: 600;
+      color: var(--muted);
+      background: var(--paper);
+    }
+    td.time {
+      white-space: nowrap;
+      font-variant-numeric: tabular-nums;
+      color: var(--muted);
+    }
+    td.step {
+      font-weight: 550;
+      white-space: nowrap;
+    }
+    td.step.good {
+      color: var(--good);
+    }
+    td.step.bad {
+      color: var(--bad);
+    }
+    td.site {
+      min-width: 132px;
+      overflow-wrap: anywhere;
+    }
+    td.site small {
+      display: block;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    td.detail {
+      overflow-wrap: anywhere;
+      color: var(--muted);
+    }
+    #logEmpty {
+      margin: 0;
+      padding: 28px 16px;
+      text-align: center;
+      color: var(--muted);
+    }
+    #logEmpty strong {
+      display: block;
+      margin: 0 0 2px;
+      color: var(--text);
+    }
+    [hidden] {
+      display: none !important;
+    }
+    .foot {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px 20px;
+      align-items: center;
+      margin: 28px 0 0;
+      padding: 16px 0 0;
+      border-top: 1px solid var(--line);
+      font-size: 13px;
+    }
+    .foot a {
+      display: inline-flex;
+      align-items: center;
+      min-height: 32px;
+    }
+    .foot .credit {
+      margin-right: auto;
+    }
+    @media (max-width: 520px) {
+      .page {
+        padding: 20px 14px 16px;
+      }
+      .card {
+        padding: 16px 14px;
+      }
     }
   </style>
 </head>
 <body>
-  <div class="card">
-    <h1>Receipt Sender</h1>
-    <p class="sub">Set this up once. After that it is one click per receipt.</p>
+  <div class="page">
+    <header class="masthead">
+      <img src="icons/icon128.png" alt="" width="48" height="48" />
+      <div>
+        <h1>Receipt Sender Settings</h1>
+        <p class="sub">Set this up once. After that, it's one click per receipt.</p>
+      </div>
+    </header>
 
-    <label class="field">Send receipts to</label>
-    <label class="choice"><input type="radio" name="service" value="sparkreceipt" />SparkReceipt</label>
-    <label class="choice"><input type="radio" name="service" value="expensify" />Expensify</label>
-    <p class="hint">You can also flip this per grab right in the toolbar popup. Expensify email drafts go to receipts@expensify.com and must be sent from your Expensify login email.</p>
+    <main class="grid">
+      <form id="settingsForm" class="stack" novalidate>
+        <section class="card">
+          <fieldset>
+            <legend>Send Receipts To</legend>
+            <label class="choice"><input type="radio" name="service" value="sparkreceipt" /><span><strong>SparkReceipt</strong></span></label>
+            <label class="choice"><input type="radio" name="service" value="expensify" /><span><strong>Expensify</strong></span></label>
+          </fieldset>
+          <p class="hint">You can also switch this for each grab, right in the toolbar popup. Expensify email drafts go to receipts@expensify.com, and you need to send them from your Expensify sign-in email.</p>
+        </section>
 
-    <label class="field" for="sparkEmail">Your SparkReceipt forwarding email</label>
-    <input type="email" id="sparkEmail" placeholder="something@sparkreceipt address" />
-    <p class="hint">
-      Find it inside <a href="https://app.sparkreceipt.com/" target="_blank">SparkReceipt</a> under the email forwarding settings.
-      Their <a href="https://help.sparkreceipt.com/en/features/how-to-forward-e-receipts-from-your-email" target="_blank">help page</a> shows where.
-      Only needed for the email options below.
-    </p>
+        <section class="card">
+          <label class="title" for="sparkEmail">Your SparkReceipt Forwarding Email</label>
+          <input type="email" id="sparkEmail" name="sparkEmail" class="field" placeholder="Your forwarding address" autocomplete="off" spellcheck="false" aria-describedby="sparkEmailHint" />
+          <p class="hint" id="sparkEmailHint">
+            Find it in <a href="https://app.sparkreceipt.com/" target="_blank" rel="noopener noreferrer">SparkReceipt</a> under the email forwarding settings.
+            Their <a href="https://help.sparkreceipt.com/en/features/how-to-forward-e-receipts-from-your-email" target="_blank" rel="noopener noreferrer">help page</a> shows where.
+            You only need it for the two email draft choices below.
+          </p>
+        </section>
 
-    <label class="field">After grabbing the page</label>
-    <label class="choice"><input type="radio" name="destination" value="autodrop" />Drop it in for me (automatic)</label>
-    <label class="choice"><input type="radio" name="destination" value="serviceweb" />Open the service so I can drop the file in myself</label>
-    <label class="choice"><input type="radio" name="destination" value="gmail" />Open a Gmail draft to the right receipt address</label>
-    <label class="choice"><input type="radio" name="destination" value="mailto" />Open my regular mail app instead of Gmail</label>
-    <label class="choice"><input type="radio" name="destination" value="none" />Just save the file, nothing else</label>
+        <section class="card">
+          <fieldset>
+            <legend>After Grabbing the Page</legend>
+            <label class="choice"><input type="radio" name="destination" value="autodrop" /><span><strong>Drop It In for Me</strong><small>Automatic. Opens the service and uploads the receipt.</small></span></label>
+            <label class="choice"><input type="radio" name="destination" value="serviceweb" /><span><strong>Open the Service</strong><small>You drop the file in yourself.</small></span></label>
+            <label class="choice"><input type="radio" name="destination" value="gmail" /><span><strong>Start a Gmail Draft</strong><small>Addressed to the right receipt address.</small></span></label>
+            <label class="choice"><input type="radio" name="destination" value="mailto" /><span><strong>Start a Mail App Draft</strong><small>Uses your regular mail app instead of Gmail.</small></span></label>
+            <label class="choice"><input type="radio" name="destination" value="none" /><span><strong>Just Save the File</strong><small>Nothing else happens.</small></span></label>
+          </fieldset>
+        </section>
 
-    <label class="field">Save the page as</label>
-    <label class="choice"><input type="radio" name="format" value="full" />Full page image, stitched top to bottom (best for long receipts)</label>
-    <label class="choice"><input type="radio" name="format" value="visible" />Screenshot of what is on screen (faster)</label>
+        <section class="card">
+          <fieldset>
+            <legend>Save the Page As</legend>
+            <label class="choice"><input type="radio" name="format" value="full" /><span><strong>Full-Page Image</strong><small>Stitched top to bottom. Best for long receipts.</small></span></label>
+            <label class="choice"><input type="radio" name="format" value="visible" /><span><strong>Visible Screenshot</strong><small>Just what's on screen. Faster.</small></span></label>
+          </fieldset>
+        </section>
 
-    <label class="field">Extras</label>
-    <label class="choice"><input type="checkbox" id="reveal" />Pop open the folder after saving (handy for manual dragging)</label>
-    <label class="choice"><input type="checkbox" id="closeTab" />Close the service tab once the upload finishes</label>
-    <label class="choice"><input type="checkbox" id="deleteLocal" />Delete the backup file once the upload finishes</label>
-    <label class="choice"><input type="checkbox" id="silent" />Silent mode: do the drop in a background tab so you stay where you are</label>
-    <p class="hint">A backup copy of every grab lands in Downloads/Receipts. The two cleanup options above only kick in after a fully successful automatic drop. If a drop ever misses, the tab stays open and the file stays put so you can finish by hand.</p>
+        <section class="card">
+          <fieldset>
+            <legend>Extras</legend>
+            <label class="choice"><input type="checkbox" id="reveal" /><span><strong>Open the Folder After Saving</strong><small>Handy when you move the file over yourself. Skipped for automatic drops.</small></span></label>
+            <label class="choice"><input type="checkbox" id="closeTab" /><span><strong>Close the Service Tab When Done</strong><small>Waits for the upload to finish first.</small></span></label>
+            <label class="choice"><input type="checkbox" id="deleteLocal" /><span><strong>Delete the Backup File When Done</strong><small>Only after a fully successful automatic drop.</small></span></label>
+            <label class="choice"><input type="checkbox" id="silent" /><span><strong>Silent Mode</strong><small>Does the drop in a background tab so you stay where you are.</small></span></label>
+          </fieldset>
+          <p class="hint">A backup copy of every grab lands in Downloads/Receipts. The two cleanup extras only kick in after a fully successful automatic drop. If a drop ever misses, the tab stays open and the file stays put so you can finish by hand.</p>
+        </section>
 
-    <button id="save">Save</button>
-    <span id="status"></span>
+        <div class="savebar">
+          <button type="submit" id="save" class="btn btn-primary">Save</button>
+          <span id="status" role="status" aria-live="polite"></span>
+        </div>
+      </form>
+
+      <section class="card log" aria-labelledby="logTitle">
+        <div class="loghead">
+          <h2 id="logTitle">Activity Log</h2>
+          <div class="logactions">
+            <button type="button" id="exportCsv" class="btn btn-soft">Export CSV</button>
+            <button type="button" id="exportJson" class="btn btn-soft">Export JSON</button>
+            <button type="button" id="clearLog" class="btn btn-plain">Clear Log</button>
+          </div>
+        </div>
+        <p class="hint">A running record of each step Receipt Sender takes, kept on this computer only. It holds site names, never page contents, file contents, or full web addresses. The newest 500 steps are kept.</p>
+        <p id="logCount" role="status" aria-live="polite"></p>
+        <div class="logscroll" id="logScroll" tabindex="0" role="region" aria-labelledby="logTitle">
+          <table id="logTable" hidden>
+            <thead>
+              <tr>
+                <th scope="col">Time</th>
+                <th scope="col">Step</th>
+                <th scope="col">Site and Service</th>
+                <th scope="col">Details</th>
+              </tr>
+            </thead>
+            <tbody id="logRows"></tbody>
+          </table>
+          <p id="logEmpty"><strong>Nothing Logged Yet</strong>Grab a receipt and each step shows up here.</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <span class="credit">Built by Harrison Ward Technology</span>
+      <a href="privacy.html" target="_blank" rel="noopener">Privacy Policy</a>
+      <span class="muted" id="version"></span>
+    </footer>
   </div>
+  <script src="activitylog.js"></script>
   <script src="options.js"></script>
 </body>
 </html>

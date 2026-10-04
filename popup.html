@@ -1,169 +1,229 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Receipt Sender</title>
+  <link rel="stylesheet" href="theme.css" />
   <style>
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      width: 300px;
-      margin: 0;
-      padding: 14px;
-      background: #ffffff;
-      color: #1f2937;
+      width: 320px;
+      padding: 14px 14px 10px;
+      font-size: 13px;
+      background: var(--surface);
+    }
+    .top {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      margin: 0 0 12px;
+    }
+    .top img {
+      flex: none;
+      border-radius: 7px;
+    }
+    .top div {
+      min-width: 0;
     }
     h1 {
-      font-size: 14px;
-      margin: 0 0 4px 0;
+      font-size: 15px;
+      line-height: 1.25;
+      margin: 0;
+      letter-spacing: -0.01em;
     }
     #pageTitle {
       font-size: 12px;
-      color: #6b7280;
-      margin: 0 0 10px 0;
+      color: var(--muted);
+      margin: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .row {
-      display: flex;
+      display: grid;
+      grid-template-columns: 58px 1fr;
       align-items: center;
       gap: 8px;
-      margin: 0 0 8px 0;
+      margin: 0 0 8px;
+    }
+    .row[hidden] {
+      display: none;
     }
     .row label {
       font-size: 12px;
-      color: #6b7280;
-      min-width: 48px;
+      color: var(--muted);
     }
-    .row select {
-      flex: 1;
-      font-size: 12px;
-      padding: 5px 6px;
-      border: 1px solid #d1d5db;
-      border-radius: 6px;
-      background: #ffffff;
+    .row select.field {
+      min-height: 34px;
+      padding: 0 8px;
+      border-radius: 8px;
+    }
+    .actions {
+      display: grid;
+      gap: 8px;
+      margin: 12px 0 0;
     }
     #sendBtn {
-      width: 100%;
-      padding: 10px;
+      min-height: 42px;
       font-size: 14px;
-      font-weight: 600;
-      color: #ffffff;
-      background: #0d9488;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    #sendBtn:hover {
-      background: #0f766e;
-    }
-    #sendBtn:disabled {
-      background: #9ca3af;
-      cursor: default;
     }
     #allBtn {
-      width: 100%;
-      margin-top: 8px;
-      padding: 8px;
+      min-height: 36px;
       font-size: 12px;
-      font-weight: 600;
-      color: #0d9488;
-      background: #f0fdfa;
-      border: 1px solid #99f6e4;
-      border-radius: 8px;
-      cursor: pointer;
-    }
-    #allBtn:hover {
-      background: #ccfbf1;
     }
     #plan {
-      font-size: 11px;
-      color: #6b7280;
-      margin: 10px 0 0 0;
-      line-height: 1.4;
+      font-size: 12px;
+      color: var(--muted);
+      margin: 10px 0 0;
+      line-height: 1.45;
     }
+    #status {
+      font-size: 12px;
+      margin: 6px 0 0;
+      line-height: 1.45;
+    }
+    #status:empty {
+      display: none;
+    }
+
+    /* Recent grabs sit on a strip of receipt paper */
     #history {
-      margin: 12px 0 0 0;
-      padding: 8px 0 0 0;
-      border-top: 1px solid #e5e7eb;
+      --tooth: 5px;
+      margin: 12px 0 0;
+      padding: 9px 12px calc(9px + var(--tooth));
+      background: var(--paper);
+      border-radius: 8px 8px 0 0;
+      -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(2 * var(--tooth)) 100%;
+      mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / calc(2 * var(--tooth)) 100%;
     }
     #history h2 {
-      font-size: 11px;
+      font-size: 12px;
       font-weight: 600;
-      color: #9ca3af;
-      text-transform: uppercase;
-      letter-spacing: 0.04em;
-      margin: 0 0 6px 0;
+      margin: 0 0 4px;
+    }
+    #historyList {
+      /* Six and a half rows: the cut-off row hints that the list scrolls */
+      max-height: 176px;
+      overflow-y: auto;
+      scrollbar-width: thin;
+      scrollbar-color: var(--muted) transparent;
+    }
+    #historyList ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
     }
     .hrow {
       display: flex;
       align-items: center;
-      gap: 6px;
-      font-size: 11px;
-      color: #4b5563;
-      padding: 2px 0;
+      gap: 8px;
+      font-size: 12px;
+      padding: 4px 0;
+      border-top: 1px dashed var(--line);
     }
     .hrow .mark {
+      flex: none;
       width: 14px;
       text-align: center;
       font-weight: 700;
     }
-    .mark.ok { color: #188038; }
-    .mark.fail { color: #d93025; }
-    .mark.working { color: #9ca3af; }
-    .mark.saved { color: #0d9488; }
+    .mark.ok { color: var(--good); }
+    .mark.fail { color: var(--bad); }
+    .mark.working { color: var(--muted); }
+    .mark.saved { color: var(--accent-text); }
     .hrow .site {
       flex: 1;
+      min-width: 0;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
     }
     .hrow .svc {
-      color: #9ca3af;
+      flex: none;
+      color: var(--muted);
     }
     #empty {
-      font-size: 11px;
-      color: #9ca3af;
+      margin: 0;
+      padding: 4px 0 2px;
+      font-size: 12px;
+      color: var(--muted);
+      border-top: 1px dashed var(--line);
     }
-    #footer {
-      margin-top: 10px;
-      text-align: right;
+    #empty strong {
+      display: block;
+      color: var(--text);
+    }
+    footer {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin: 8px 0 0;
+      font-size: 11px;
     }
     #optionsLink {
-      font-size: 11px;
-      color: #0d9488;
-      text-decoration: none;
+      min-height: 28px;
+      padding: 0 4px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent-text);
+      background: none;
+      border: 0;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    #optionsLink:hover {
+      text-decoration: underline;
     }
   </style>
 </head>
 <body>
-  <h1>Receipt Sender</h1>
-  <p id="pageTitle">This page</p>
-  <div class="row">
-    <label for="service">Send to</label>
-    <select id="service">
-      <option value="sparkreceipt">SparkReceipt</option>
-      <option value="expensify">Expensify</option>
-    </select>
-  </div>
-  <div class="row" id="typeRow">
-    <label for="sparkType">Type</label>
-    <select id="sparkType">
-      <option value="expense">Expense or receipt</option>
-      <option value="income">Income or invoice</option>
-      <option value="statement">Statement</option>
-      <option value="other">Other document</option>
-    </select>
-  </div>
-  <button id="sendBtn">Grab this page</button>
-  <button id="allBtn">Grab all tabs in this window</button>
-  <p id="plan"></p>
-  <div id="history">
-    <h2>Recent grabs</h2>
-    <div id="historyList"><span id="empty">Nothing yet. Grab something.</span></div>
-  </div>
-  <div id="footer">
-    <a href="#" id="optionsLink">Settings</a>
-  </div>
+  <header class="top">
+    <img src="icons/icon48.png" alt="" width="30" height="30" />
+    <div>
+      <h1>Receipt Sender</h1>
+      <p id="pageTitle">This Page</p>
+    </div>
+  </header>
+
+  <main>
+    <div class="row">
+      <label for="service">Send To</label>
+      <select id="service" class="field">
+        <option value="sparkreceipt">SparkReceipt</option>
+        <option value="expensify">Expensify</option>
+      </select>
+    </div>
+    <div class="row" id="typeRow">
+      <label for="sparkType">Type</label>
+      <select id="sparkType" class="field">
+        <option value="expense">Expense or Receipt</option>
+        <option value="income">Income or Invoice</option>
+        <option value="statement">Statement</option>
+        <option value="other">Other Document</option>
+      </select>
+    </div>
+
+    <div class="actions">
+      <button type="button" id="sendBtn" class="btn btn-primary">Grab This Page</button>
+      <button type="button" id="allBtn" class="btn btn-soft">Grab All Tabs in This Window</button>
+    </div>
+
+    <p id="plan" aria-live="polite"></p>
+    <p id="status" role="status" aria-live="polite"></p>
+
+    <section id="history" aria-labelledby="historyTitle">
+      <h2 id="historyTitle">Recent Grabs</h2>
+      <div id="historyList">
+        <p id="empty"><strong>No Grabs Yet</strong>Grab a page and it shows up here.</p>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <span class="credit">Built by Harrison Ward Technology</span>
+    <button type="button" id="optionsLink">Settings</button>
+  </footer>
   <script src="popup.js"></script>
 </body>
 </html>
