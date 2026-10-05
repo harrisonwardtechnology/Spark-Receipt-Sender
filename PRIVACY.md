@@ -35,7 +35,7 @@ No analytics, no tracking, no telemetry, no cookies, no fingerprinting, no adver
 
 ## Other Companies
 
-Uploads go to SparkReceipt or Expensify under your own account. What they do with your receipts is covered by their privacy policies, not this one. If you choose a Gmail or mail app draft, that draft opens in your own mail and includes the page title and web address so you know which receipt it is.
+Uploads go to SparkReceipt or Expensify under your own account. What they do with your receipts is covered by their privacy policies, not this one. If you choose a Gmail or mail app draft, that draft opens in your own mail and includes the page title and the site name (not the full web address) so you know which receipt it is.
 
 ## Contact
 

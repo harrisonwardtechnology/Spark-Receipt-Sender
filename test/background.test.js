@@ -384,6 +384,24 @@ test("Gmail and mail app drafts are addressed and encoded correctly", async () =
   assert.equal(callsTo(bg.calls, "tabs.create").length, 3);
 });
 
+test("email drafts name the site, never the full web address", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.openDestination(TAB, { service: "expensify", destination: "gmail" });
+  await bg.sandbox.openDestination(TAB, { service: "sparkreceipt", sparkEmail: "me@spark.example", destination: "mailto" });
+  await bg.sandbox.openDestination({ title: "Order" }, { service: "expensify", destination: "gmail" });
+  const urls = callsTo(bg.calls, "tabs.create").map((c) => c[1].url);
+  const bodies = urls.map((u) => decodeURIComponent(u.slice(u.indexOf("body=") + 5)));
+  assert.equal(bodies[0], "Receipt captured from amazon.com\n\nAttach the newest file from Downloads/Receipts before sending.");
+  assert.equal(bodies[1], bodies[0]);
+  assert.match(bodies[2], /^Receipt captured from a page\n/);
+  for (const url of urls) {
+    assert.ok(!url.includes("SECRETTOKEN") && !url.includes("order-details") && !url.includes("orderID"), url);
+  }
+  for (const doc of ["PRIVACY.md", "privacy.html"]) {
+    assert.match(read(doc), /the page title and the site name \(not the full web address\)/, doc);
+  }
+});
+
 test("the service tab is reused when one is open, and silent mode stays in the background", async () => {
   let bg = loadBackground({ tabs: () => [{ id: 9, windowId: 3 }] });
   await bg.sandbox.openServiceTab({ service: "sparkreceipt", silent: false });

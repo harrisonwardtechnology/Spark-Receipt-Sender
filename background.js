@@ -726,9 +726,12 @@ async function enqueueCapture(capture, filename, settings, downloadId, entryId) 
 async function openDestination(tab, settings) {
   const title = (tab && tab.title) || "Receipt";
   const subject = "Receipt: " + title;
+  // The site name only, never the full address (it can hold order numbers
+  // or sign-in tokens)
+  const site = tab && tab.url ? hostOf(tab.url) : "page";
   const body =
     "Receipt captured from " +
-    ((tab && tab.url) || "a page") +
+    (site === "page" ? "a page" : site) +
     "\n\nAttach the newest file from Downloads/Receipts before sending.";
 
   if (settings.destination === "serviceweb") {
