@@ -660,7 +660,7 @@ async function runBatch(windowId) {
 // ---------- delivery ----------
 
 async function deliver(tab, settings, capture, entryId, batchMode) {
-  const filename = buildFilename(capture.ext);
+  const filename = buildFilename(capture.ext, tab && tab.url);
 
   // Always keep a copy in Downloads/Receipts as a safety net
   const downloadId = await chrome.downloads.download({
@@ -1026,8 +1026,55 @@ function extFromMime(mime) {
   return "png";
 }
 
-function buildFilename(ext) {
-  return "Receipts/" + crypto.randomUUID() + "." + ext;
+// Backup files are named for the site and the local time, with a short random
+// ending so two grabs in the same minute never collide:
+//   Receipts/amazon.com-2026-10-04-1932-a7k2.jpg
+// `pageUrl` is the page the grab came from (for an image, the page it was on).
+function buildFilename(ext, pageUrl, now) {
+  const d = now && typeof now.getFullYear === "function" ? now : new Date();
+  const two = (n) => String(n).padStart(2, "0");
+  const stamp =
+    d.getFullYear() + "-" + two(d.getMonth() + 1) + "-" + two(d.getDate()) +
+    "-" + two(d.getHours()) + two(d.getMinutes());
+  return (
+    "Receipts/" + siteForFilename(pageUrl) + "-" + stamp + "-" + shortId() +
+    "." + ext
+  );
+}
+
+const FILENAME_SITE_MAX = 40;
+
+// The site part of a backup file name: the web page's host without "www.",
+// lowercase, letters, digits, dots and dashes only. International names stay
+// in their xn-- form. Anything that isn't a web page gives "receipt".
+function siteForFilename(pageUrl) {
+  let host = "";
+  try {
+    const url = new URL(pageUrl);
+    if (url.protocol === "http:" || url.protocol === "https:") {
+      host = url.hostname;
+    }
+  } catch (e) {
+    host = "";
+  }
+  host = host
+    .toLowerCase()
+    .replace(/^\[(.*)\]$/, (m, ip) => ip.replace(/:+/g, "-")) // IPv6
+    .replace(/^www\./, "")
+    .replace(/[^a-z0-9.-]/g, "")
+    .replace(/\.{2,}/g, ".")
+    .slice(0, FILENAME_SITE_MAX)
+    .replace(/^[.-]+|[.-]+$/g, "");
+  return host || "receipt";
+}
+
+// Four random letters and digits.
+function shortId() {
+  const chars = "abcdefghijklmnopqrstuvwxyz0123456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(4));
+  let out = "";
+  for (let i = 0; i < bytes.length; i++) out += chars[bytes[i] % chars.length];
+  return out;
 }
 
 // ---------- Activity Log wording (never throws) ----------

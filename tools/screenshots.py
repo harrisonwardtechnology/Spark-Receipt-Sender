@@ -14,10 +14,12 @@ The run fails if any page logs a console error, so it doubles as a smoke test
 of the popup, settings and privacy pages in light and dark mode.
 """
 
+import datetime
 import json
 import pathlib
 import sys
 import tempfile
+from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
 
@@ -41,6 +43,11 @@ def sample_log():
         t[0] += int(after * 1000)
         return dict(ts=t[0], step=name, **fields)
 
+    def saved(site, short, ext="jpg"):
+        """A backup file name the way the extension makes them, in Dallas time."""
+        local = datetime.datetime.fromtimestamp(t[0] / 1000, ZoneInfo(TIMEZONE))
+        return "Receipts/%s-%s-%s.%s" % (site, local.strftime("%Y-%m-%d-%H%M"), short, ext)
+
     a, b, c, d, e = (
         "3f6c1c1e-8a54-4d0b-9a57-0f6f4a1b2c01",
         "9b1d7e42-1c3a-4f8e-b2a6-5d4c3b2a1f02",
@@ -51,7 +58,7 @@ def sample_log():
     spark, exp = "sparkreceipt", "expensify"
     log = [
         step("grab_started", grabId=a, host="amazon.com", service=spark, detail="Page"),
-        step("file_saved", 2.4, grabId=a, detail="Receipts/%s.jpg" % a),
+        step("file_saved", 2.4, grabId=a, detail=saved("amazon.com", "a7k2")),
         step("receipt_queued", 0.1, grabId=a, service=spark),
         step("service_opened", 0.1, service=spark, detail="Background tab"),
         step("receipt_picked_up", 1.6, grabId=a, service=spark),
@@ -63,7 +70,7 @@ def sample_log():
         step("tab_closed", 0.1, service=spark),
 
         step("grab_started", 412, grabId=b, host="homedepot.com", service=spark, detail="Page"),
-        step("file_saved", 3.1, grabId=b, detail="Receipts/%s.jpg" % b),
+        step("file_saved", 3.1, grabId=b, detail=saved("homedepot.com", "m3qd")),
         step("receipt_queued", 0.1, grabId=b, service=spark),
         step("service_opened", 0.1, service=spark, detail="Background tab"),
         step("receipt_picked_up", 1.4, grabId=b, service=spark),
@@ -76,7 +83,7 @@ def sample_log():
 
         step("settings_changed", 1264, detail="service"),
         step("grab_started", 9, grabId=c, host="riders.uber.com", service=exp, detail="Page"),
-        step("file_saved", 1.2, grabId=c, detail="Receipts/%s.png" % c),
+        step("file_saved", 1.2, grabId=c, detail=saved("riders.uber.com", "x9p4", "png")),
         step("receipt_queued", 0.1, grabId=c, service=exp),
         step("service_opened", 0.1, service=exp, detail="Background tab"),
         step("receipt_picked_up", 2.2, grabId=c, service=exp),
@@ -89,7 +96,7 @@ def sample_log():
 
         step("settings_changed", 2890, detail="service"),
         step("grab_started", 14, grabId=d, host="harborfreight.com", service=spark, detail="Page"),
-        step("file_saved", 2.8, grabId=d, detail="Receipts/%s.jpg" % d),
+        step("file_saved", 2.8, grabId=d, detail=saved("harborfreight.com", "h2fw")),
         step("receipt_queued", 0.1, grabId=d, service=spark),
         step("service_opened", 0.1, service=spark, detail="Background tab"),
         step("receipt_picked_up", 1.5, grabId=d, service=spark),
@@ -100,7 +107,7 @@ def sample_log():
 
         step("settings_changed", 655, detail="after grabbing"),
         step("grab_started", 21, grabId=e, host="microcenter.com", service=spark, detail="Page"),
-        step("file_saved", 2.2, grabId=e, detail="Receipts/%s.jpg" % e),
+        step("file_saved", 2.2, grabId=e, detail=saved("microcenter.com", "r6tb")),
         step("saved_only", 0.1, grabId=e, service=spark, detail="Backup file only"),
         step("settings_changed", 48, detail="after grabbing"),
     ]

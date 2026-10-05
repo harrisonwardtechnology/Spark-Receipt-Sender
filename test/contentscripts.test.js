@@ -19,7 +19,7 @@ const PAYLOAD = {
   sparkType: "expense",
   b64: Buffer.from("fake image bytes").toString("base64"),
   mime: "image/jpeg",
-  filename: "3f6c1c1e.jpg",
+  filename: "amazon.com-2026-10-04-1932-a7k2.jpg",
   closeTab: false,
   deleteLocal: false
 };
@@ -191,7 +191,7 @@ test("SparkReceipt: Add documents, pick the type, attach, Confirm", async () => 
   assert.deepEqual(app.types.map((t) => t.clicks), [1, 0, 0, 0]);
   await run.tick();
   assert.equal(app.input.files.length, 1);
-  assert.equal(app.input.files[0].name, "3f6c1c1e.jpg");
+  assert.equal(app.input.files[0].name, "amazon.com-2026-10-04-1932-a7k2.jpg");
   assert.equal(app.input.files[0].type, "image/jpeg");
   assert.equal(app.input.files[0].size, 16);
   assert.deepEqual(app.input.events, ["input", "change"]);
@@ -371,7 +371,7 @@ test("Expensify: Scan receipt, drop the file on the upload zone, Create expense"
   assert.equal(app.scan.clicks, 1);
   await run.tick();
   assert.deepEqual(app.zone.events, ["dragenter", "dragover", "drop"]);
-  assert.equal(app.zone.dropped.name, "3f6c1c1e.jpg");
+  assert.equal(app.zone.dropped.name, "amazon.com-2026-10-04-1932-a7k2.jpg");
   assert.equal(app.zone.dropped.type, "image/jpeg");
 
   await run.tick(); // too soon after dropping: wait
