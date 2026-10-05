@@ -1,6 +1,6 @@
 # Receipt Sender
 
-![Version](https://img.shields.io/badge/version-4.1.1-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038) [![Tests](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml/badge.svg)](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml)
+![Version](https://img.shields.io/badge/version-4.2.0-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038) [![Tests](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml/badge.svg)](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.png">
@@ -18,7 +18,7 @@ One click on a receipt page and the extension grabs the whole page as a stitched
 - **SparkReceipt:** Add documents, Expense or receipt, attach, Confirm.
 - **Expensify:** Scan receipt, drop on the upload zone, Create expense.
 
-A small note in the corner of the service page tells you each step as it happens. A backup copy of every grab lands in Downloads/Receipts.
+A small note in the corner of the service page tells you each step as it happens. A backup copy of every grab lands in Downloads/Receipts, named for the site and the time, like `amazon.com-2026-10-04-1932-a7k2.jpg`.
 
 ## Screenshots
 
@@ -50,7 +50,7 @@ More in [docs/screenshots](docs/screenshots): the popup and settings page before
 | Recent Grabs | Your last 10 grabs in the popup, each marked uploaded, saved, or missed |
 | Activity Log | A timestamped record of every step, kept on your computer, with export and clear |
 | Type Picker | SparkReceipt grabs can be filed as an expense, invoice, statement, or other document |
-| Unique File Names | Every grab saves under a unique ID, so names never collide |
+| Readable File Names | Backups are named for the site, date and time, plus a short code so names never collide |
 | Safety Net | Any miss leaves the tab open and the file in Downloads/Receipts |
 | Light and Dark Mode | The popup, settings, and privacy pages follow your device setting |
 
@@ -61,6 +61,8 @@ More in [docs/screenshots](docs/screenshots): the popup and settings page before
 3. Turn on Developer mode (top right).
 4. Click Load unpacked and pick the folder.
 5. Pin the icon: click the puzzle piece in the toolbar, then the pin.
+
+Or install it from the Chrome Web Store, once the private listing is up. A store install updates itself. If you switch, remove the unpacked copy so you don't have two. Publishing steps are in [docs/web-store.md](docs/web-store.md).
 
 The settings page opens when you install. Add your SparkReceipt forwarding email there only if you want the email draft choices. The automatic drop needs no setup at all.
 
@@ -98,7 +100,11 @@ Neither service has a public upload API, so the extension works each web app the
 - **SparkReceipt:** a script on app.sparkreceipt.com opens Add documents, picks the document type, hands the file to their upload field, and clicks Confirm.
 - **Expensify:** a script on new.expensify.com clicks Scan receipt, drops your file onto their upload zone, and clicks Create expense.
 
-Both flows were last verified against the live apps in August 2026. Version 4.1.1 kept the same buttons, clicks and timings but changed a few details around them (listed in the changelog), and it wasn't checked against the live apps again. If either service redesigns its upload screens, the drop may miss until the extension is updated. The backup file in Downloads/Receipts always works in the meantime.
+Both flows were last verified against the live apps in August 2026. Version 4.1.1 kept the same buttons, clicks and timings but changed a few details around them (listed in the changelog), and it wasn't checked against the live apps again. Version 4.2.0 doesn't change the upload flows at all. If either service redesigns its upload screens, the drop may miss until the extension is updated. The backup file in Downloads/Receipts always works in the meantime.
+
+### Check the Live Sites Monthly
+
+`tools/live_check.py` opens both sites in a browser profile you've signed in to by hand, walks only the safe first steps (Add documents and the upload field on SparkReceipt, Scan receipt and the drop zone on Expensify), and reports in plain English whether every button and field the extension uses is still there, with a screenshot of each step. It never uploads anything, never clicks Confirm or Create expense, and never signs in for you. Run it once a month. Windows setup is in [docs/live-check.md](docs/live-check.md).
 
 ## Permissions, in Plain English
 
@@ -133,17 +139,19 @@ node --test test/
 
 They cover the manifest and its permissions, the service worker's queue, settings, and Recent Grabs logic, the Activity Log, the order of clicks in both upload scripts (against stand-in pages), the pages' labels and local-only files, color contrast in light and dark mode, and the wording rules for this repo. They run on GitHub for every pull request that changes code.
 
-The tests can't sign in to SparkReceipt or Expensify, so they don't prove the live sites still match. That part is checked by hand.
+The tests can't sign in to SparkReceipt or Expensify, so they don't prove the live sites still match. The live check does that, with your sign-in.
 
-Three optional helpers in `tools/` need Python Playwright with Chromium:
+Helpers in `tools/`. All but the last need Python Playwright with Chromium:
 
-- `python3 tools/screenshots.py` retakes every screenshot in docs/screenshots.
+- `python3 tools/screenshots.py` retakes every screenshot in docs/screenshots and the store images in store/.
 - `python3 tools/ui_check.py` clicks through the popup and settings page with a stand-in for Chrome's extension features.
 - `python3 tools/mock_flow_check.py` loads the real extension in Chromium and runs both upload flows against local stand-in pages.
+- `python3 tools/live_check.py --profile <folder>` checks the live sites without uploading anything ([docs/live-check.md](docs/live-check.md)). With `--dry-run` it runs against the local stand-in pages instead.
+- `python3 tools/package.py` builds the Chrome Web Store zip in dist/ with only the files the extension runs, and checks it ([docs/web-store.md](docs/web-store.md)).
 
 ## What's New
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is 4.1.1: bug fixes for Recent Grabs, the upload queue, timeouts, and a few smaller things.
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is 4.2.0: readable backup file names, a monthly live check of both sites, and everything needed for a private Chrome Web Store listing.
 
 ## Notes
 
@@ -152,10 +160,11 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is
 - Gmail and mail app drafts address themselves to the right place for each service: your SparkReceipt forwarding address, or receipts@expensify.com (send from your Expensify sign-in email).
 - Very long pages are captured up to 12 screens tall. When a page is cut short, the Activity Log says so, the note on the SparkReceipt or Expensify page mentions it, and with the other After Grabbing the Page choices the toolbar badge shows CUT instead of OK.
 - Chrome's own pages and the Chrome Web Store can't be captured.
-- Because it's loaded unpacked, Chrome may occasionally remind you about developer mode extensions. You can dismiss that.
+- Backup files are named in your computer's local time. Pages that aren't web sites (a file on your computer, for example) are named `receipt-...`.
+- Because it's loaded unpacked, Chrome may occasionally remind you about developer mode extensions. You can dismiss that, or install from the store instead.
 
 ## License
 
-Source available for transparency and personal use. No republishing to extension stores, no redistribution. Full terms are in [LICENSE](LICENSE).
+Source available for transparency and personal use. Only the copyright holder's own Chrome Web Store listing is official. No republishing to extension stores by anyone else, no redistribution. Full terms are in [LICENSE](LICENSE).
 
 Built by Harrison Ward Technology.

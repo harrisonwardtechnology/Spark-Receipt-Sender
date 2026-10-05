@@ -2,6 +2,26 @@
 
 The newest version is at the top.
 
+## 4.2.0, October 2026
+
+Readable file names, a live check of both sites, and what's needed for a private Chrome Web Store listing. The upload screens are walked exactly as in 4.1.1.
+
+### New
+
+- **Readable File Names.** Backup copies in Downloads/Receipts are now named for the site and the time you grabbed them, like `amazon.com-2026-10-04-1932-a7k2.jpg`, instead of a long random ID. Image grabs use the page the image was on. Pages that aren't web sites are named `receipt-...`. The short code at the end keeps two grabs in the same minute from colliding. The name SparkReceipt and Expensify see for the upload is the same one, and the privacy policy now says the file names include the site.
+- **Live Check.** `tools/live_check.py` opens SparkReceipt and Expensify in a browser profile you've signed in to by hand and checks that every button and field the extension uses is still there, with a screenshot of each step and a plain English report. It never uploads anything, never clicks Confirm or Create expense, and never signs in for you. Run it monthly. Setup on Windows is in docs/live-check.md.
+- **Chrome Web Store Prep.** `tools/package.py` builds a clean upload zip with only the files the extension runs. The `store` folder has the listing text, a justification for every permission, data use answers, 1280x800 screenshots, a small promo tile, and the store icon. docs/web-store.md walks through publishing a private listing.
+
+### Changed
+
+- **License.** It now says plainly that the copyright holder's own store listing is allowed and is the only official one. Republishing by anyone else is still not allowed.
+
+### Under the Hood
+
+- `tools/live_selectors.json` lists the selectors and button wording the live check looks for. A new test makes sure it matches `sparkdrop.js` and `expensifydrop.js` both ways, so the content scripts didn't change.
+- New tests for the file name builder (international site names, IP addresses, file pages, very long names, no site at all) and for the store zip's file list.
+- `tools/screenshots.py` also makes the store images.
+
 ## 4.1.1, October 2026
 
 Bug fixes. The upload screens are walked with the same buttons, clicks and timings as before, with two exceptions noted below.
