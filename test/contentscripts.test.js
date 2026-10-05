@@ -389,6 +389,21 @@ test("Expensify: gives up after 75 seconds if the page never matches", async () 
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
 });
 
+test("Expensify: no Create button means a miss, even with the cleanup extras on", async () => {
+  const app = expensifyPage({ noSubmit: true });
+  const run = await start("expensifydrop.js", { ...EXP, closeTab: true, deleteLocal: true }, app.page, "/create/scan");
+  await run.tick();
+  await run.tick();
+  assert.deepEqual(app.zone.events, ["dragenter", "dragover", "drop"]);
+  await run.tick(19000);
+  assert.deepEqual(run.flow(), ["getPendingReceipt"]);
+  await run.tick(1500);
+  assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
+  assert.equal(run.banner(), "Receipt attached. Finish the last step in Expensify yourself.");
+  await run.tick(60000);
+  assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
+});
+
 test("Expensify: ignores a receipt meant for SparkReceipt", async () => {
   const run = await start("expensifydrop.js", PAYLOAD, expensifyPage().page);
   assert.equal(run.intervals.length, 0);

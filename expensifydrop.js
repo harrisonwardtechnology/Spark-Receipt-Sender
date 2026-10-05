@@ -130,10 +130,9 @@
           submit.click();
           finish("Receipt dropped in. Expensify is scanning it now.", true);
         } else if (Date.now() - attachedAt > 20000) {
-          finish(
-            "Receipt attached. Finish the last step in Expensify yourself.",
-            true
-          );
+          // No Create button means no proof the expense was made: a miss,
+          // so the tab stays open and the backup file is kept.
+          finish("Receipt attached. Finish the last step in Expensify yourself.");
         }
       }
     } catch (e) {

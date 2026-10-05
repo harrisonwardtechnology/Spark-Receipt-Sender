@@ -129,6 +129,10 @@ SCENARIOS = {
     "mixed_queue": dict(settings={}, preload=PRELOAD_EXPENSIFY, grabs=2,
                         clicks=[c % "Expense or receipt" if "%s" in c else c for c in SPARK_CLICKS],
                         other_clicks=EXPENSIFY_CLICKS),
+    # Expensify takes the file but never shows Create expense: a miss, not
+    # a success. The tab stays open and the backup file is kept.
+    "exp_no_create": dict(settings={"service": "expensify", "closeTab": True}, mode={"new.expensify.com": "no_create"},
+                          clicks=EXPENSIFY_CLICKS[:3], expect="fail", deadline=40),
     # The SparkReceipt page never loads, so it never reports back. The wait
     # is shortened from 5 minutes to 6 seconds for the check.
     "spark_no_reply": dict(settings={}, mode={"app.sparkreceipt.com": "hang"}, clicks=[], expect="fail",
