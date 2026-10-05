@@ -219,11 +219,21 @@ function loadBackground(opts) {
   const o = opts || {};
   const { chrome, calls } = fakeChrome(o);
   const timers = fastTimers();
+  // Repeating timers never fire on their own. Tests fire them with
+  // fireIntervals() when they want to.
+  const intervals = [];
   const sandbox = {
     chrome,
     console: { log() {}, warn() {}, error() {} },
     setTimeout: timers.setTimeout,
     clearTimeout: timers.clearTimeout,
+    setInterval: (fn, ms) => {
+      intervals.push({ fn, ms, live: true });
+      return intervals.length;
+    },
+    clearInterval: (id) => {
+      if (intervals[id - 1]) intervals[id - 1].live = false;
+    },
     crypto: globalThis.crypto,
     URL,
     btoa,
@@ -268,7 +278,8 @@ function loadBackground(opts) {
     if (keptOpen && !replied) await waiting;
     return { keptOpen, reply, replied };
   };
-  return { sandbox, chrome, calls, evalIn, settle, send };
+  const fireIntervals = () => intervals.filter((i) => i.live).forEach((i) => i.fn());
+  return { sandbox, chrome, calls, evalIn, settle, send, intervals, fireIntervals };
 }
 
 function callsTo(calls, api) {

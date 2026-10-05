@@ -47,7 +47,22 @@ const SERVICES = {
   }
 };
 
+// Receipts waiting to upload are held briefly: never longer than this.
 const QUEUE_MAX_AGE_MS = 10 * 60 * 1000;
+
+// How long to wait on a service page. tools/mock_flow_check.py shortens
+// these so a scenario doesn't take minutes.
+const TIMING = {
+  // A page that took a receipt reports back well within this (its longest
+  // wait is about a minute, for the upload to settle before cleanup).
+  inFlightMaxAgeMs: 3 * 60 * 1000,
+  // No word at all from a service page for this long, with receipts still
+  // waiting, counts as a miss. The longest a page stays quiet on purpose is
+  // 3 minutes, while it waits for you to sign in.
+  noReplyMs: 5 * 60 * 1000,
+  // How often to check while receipts are waiting
+  watchEveryMs: 20 * 1000
+};
 const MAX_SLICES = 12;
 const HISTORY_MAX = 10;
 
@@ -132,6 +147,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return false;
   }
+
+  if (serviceOfSender(sender)) heardFromService();
 
   // The three upload messages run one after another, in the order they
   // arrive, so a quick "finished" can't overtake the "consumed" before it.
@@ -244,12 +261,16 @@ function withQueue(fn) {
   return next;
 }
 
+// Receipts older than QUEUE_MAX_AGE_MS are dropped here, and counted as
+// missed, whenever the queue is read.
 async function getQueue() {
   const { queue } = await chrome.storage.local.get("queue");
   const list = Array.isArray(queue) ? queue : [];
-  const fresh = list.filter((i) => Date.now() - i.createdAt < QUEUE_MAX_AGE_MS);
+  const now = Date.now();
+  const fresh = list.filter((i) => i && now - i.createdAt < QUEUE_MAX_AGE_MS);
   if (fresh.length !== list.length) {
     await chrome.storage.local.set({ queue: fresh });
+    await noteMissed(list.filter((i) => fresh.indexOf(i) === -1));
   }
   return fresh;
 }
@@ -311,6 +332,113 @@ async function consumeHead(service, id) {
     startedAt: Date.now()
   });
   await setInFlight(list);
+}
+
+// ---------- receipts that never finish ----------
+//
+// A service page can fail to report back: the tab was closed, the page never
+// loaded, or the site changed. Without this, the toolbar would show "..." and
+// Recent Grabs "Working" forever, and the image would sit in storage.
+
+let lastWordAt = 0; // last time a service page sent anything
+let watchTimer = null;
+
+function heardFromService() {
+  lastWordAt = Date.now();
+}
+
+// Mark receipts that never finished as missed, badge "!" and log why.
+async function noteMissed(items) {
+  const list = (items || []).filter((i) => i && typeof i === "object");
+  if (!list.length) return;
+  for (const item of list) {
+    const service = serviceOfItem(item);
+    await historyUpdate(item.id, "fail", "working");
+    logEvent("upload_missed", {
+      grabId: item.id,
+      service: service,
+      detail: "No word back from " + SERVICES[service].name
+    });
+  }
+  await flashBadge("!", "#d93025");
+}
+
+// Clear out anything that has waited too long. Runs when the service worker
+// starts, on each grab, and every so often while receipts are waiting.
+// Returns how many receipts are still waiting or in flight.
+function sweepStale() {
+  return withQueue(async () => {
+    const now = Date.now();
+    const quiet = lastWordAt > 0 && now - lastWordAt > TIMING.noReplyMs;
+    let queue = await getQueue();
+    let inFlight = await getInFlight();
+
+    const late = inFlight.filter(
+      (i) => quiet || !(now - (i.startedAt || 0) < TIMING.inFlightMaxAgeMs)
+    );
+    if (late.length) {
+      inFlight = inFlight.filter((i) => late.indexOf(i) === -1);
+      await setInFlight(inFlight);
+      await noteMissed(late);
+    }
+    if (quiet && queue.length) {
+      const waiting = queue;
+      queue = [];
+      await setQueue(queue);
+      await noteMissed(waiting);
+    }
+
+    // Recent Grabs rows left on Working with nothing behind them (for example
+    // from before 4.1.1) are marked as missed.
+    const { history } = await chrome.storage.local.get("history");
+    const live = queue.concat(inFlight).map((i) => i.id);
+    let changed = false;
+    (Array.isArray(history) ? history : []).forEach((h) => {
+      if (
+        h &&
+        h.status === "working" &&
+        live.indexOf(h.id) === -1 &&
+        now - (h.ts || 0) > QUEUE_MAX_AGE_MS + TIMING.inFlightMaxAgeMs
+      ) {
+        h.status = "fail";
+        changed = true;
+      }
+    });
+    if (changed) await chrome.storage.local.set({ history: history });
+
+    return queue.length + inFlight.length;
+  });
+}
+
+// Keep an eye on waiting receipts until they're all done. The regular
+// storage read also keeps the service worker awake while it waits.
+function watchDrops() {
+  if (watchTimer) return;
+  watchTimer = setInterval(checkDrops, TIMING.watchEveryMs);
+}
+
+async function checkDrops() {
+  try {
+    const left = await sweepStale();
+    if (!left && watchTimer) {
+      clearInterval(watchTimer);
+      watchTimer = null;
+    }
+  } catch (e) {
+    // try again next time
+  }
+}
+
+async function startUp() {
+  try {
+    const left = await sweepStale();
+    if (left) {
+      heardFromService(); // give pages a fresh wait after a restart
+      watchDrops();
+    }
+  } catch (e) {
+    // nothing to tidy
+  }
 }
 
 async function handleDropFinished(msg, sender) {
@@ -384,11 +512,12 @@ async function historyAdd(entry) {
   await chrome.storage.local.set({ history: list.slice(0, HISTORY_MAX) });
 }
 
-async function historyUpdate(id, status) {
+// With `onlyFrom`, the row only changes if it still has that status.
+async function historyUpdate(id, status, onlyFrom) {
   const { history } = await chrome.storage.local.get("history");
   const list = Array.isArray(history) ? history : [];
   const hit = list.find((h) => h.id === id);
-  if (hit) {
+  if (hit && (!onlyFrom || hit.status === onlyFrom)) {
     hit.status = status;
     await chrome.storage.local.set({ history: list });
   }
@@ -397,6 +526,7 @@ async function historyUpdate(id, status) {
 // ---------- single grabs ----------
 
 async function run(tab) {
+  sweepStale().catch(() => {});
   const settings = await loadSettings();
   await setBadge("...", "#5f6368");
   const entryId = crypto.randomUUID();
@@ -425,6 +555,7 @@ async function run(tab) {
 }
 
 async function runImage(tab, srcUrl) {
+  sweepStale().catch(() => {});
   const settings = await loadSettings();
   await setBadge("...", "#5f6368");
   const entryId = crypto.randomUUID();
@@ -455,6 +586,7 @@ async function runImage(tab, srcUrl) {
 // ---------- batch ----------
 
 async function runBatch(windowId) {
+  sweepStale().catch(() => {});
   const settings = await loadSettings();
   const all = await chrome.tabs.query({ windowId: windowId });
   const targets = all.filter(
@@ -547,6 +679,8 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
       enqueueCapture(capture, filename, settings, downloadId, entryId)
     );
     logEvent("receipt_queued", { grabId: entryId, service: settings.service });
+    heardFromService(); // the wait for a service page starts now
+    watchDrops();
     if (!batchMode) {
       await openServiceTab(settings);
     }
@@ -981,3 +1115,6 @@ async function flashBadge(text, color) {
     chrome.action.setBadgeText({ text: "" });
   }, 4000);
 }
+
+// Tidy up anything left from before the service worker last stopped.
+startUp();

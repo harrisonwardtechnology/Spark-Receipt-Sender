@@ -129,6 +129,11 @@ SCENARIOS = {
     "mixed_queue": dict(settings={}, preload=PRELOAD_EXPENSIFY, grabs=2,
                         clicks=[c % "Expense or receipt" if "%s" in c else c for c in SPARK_CLICKS],
                         other_clicks=EXPENSIFY_CLICKS),
+    # The SparkReceipt page never loads, so it never reports back. The wait
+    # is shortened from 5 minutes to 6 seconds for the check.
+    "spark_no_reply": dict(settings={}, mode={"app.sparkreceipt.com": "hang"}, clicks=[], expect="fail",
+                           timing={"noReplyMs": 6000, "watchEveryMs": 1000}, never_loads=True,
+                           missed_detail="No word back from SparkReceipt"),
 }
 
 
@@ -214,7 +219,7 @@ def run_scenario(p, name, sc, port):
             sw.evaluate("(s) => chrome.storage.sync.set(s)", sc["settings"])
         if sc.get("timing"):
             # Shorter waits so a scenario doesn't take minutes
-            sw.evaluate("(t) => Object.assign(TIMING, t)", sc["timing"])
+            sw.evaluate("(t) => typeof TIMING === \"object\" && Object.assign(TIMING, t)", sc["timing"])
         shop = ctx.pages[0] if ctx.pages else ctx.new_page()
         shop.goto("https://shop.example.test/orders/114-2233?token=SECRETTOKEN")
         shop.bring_to_front()

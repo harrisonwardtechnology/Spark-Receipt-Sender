@@ -229,6 +229,127 @@ test("a captured image is queued without its folder or data URL wrapper", async 
   assert.equal(typeof item.createdAt, "number");
 });
 
+// ---------- receipts that never finish ----------
+
+function missedSteps(bg) {
+  return (bg.chrome.storage.local.data.activityLog || [])
+    .filter((e) => e.step === "upload_missed")
+    .map((e) => [e.grabId, e.service, e.detail]);
+}
+
+function badges(bg) {
+  return callsTo(bg.calls, "action.setBadgeText").map((c) => c[1].text);
+}
+
+test("on start, receipts that waited too long are cleared and marked as missed", async () => {
+  const now = Date.now();
+  const bg = loadBackground({
+    local: {
+      queue: [
+        { id: "aa01", service: "expensify", b64: "AAAA", createdAt: now - 11 * 60 * 1000 },
+        { id: "bb02", service: "sparkreceipt", b64: "AAAA", createdAt: now }
+      ],
+      inFlight: { id: "cc03", service: "sparkreceipt", downloadId: 4 },
+      history: [
+        { id: "bb02", ts: now, status: "working" },
+        { id: "aa01", ts: now - 11 * 60 * 1000, status: "working" },
+        { id: "cc03", ts: now - 60 * 60 * 1000, status: "working" },
+        { id: "dd04", ts: now - 60 * 60 * 1000, status: "working" },
+        { id: "ee05", ts: now - 60 * 60 * 1000, status: "ok" }
+      ]
+    }
+  });
+  await bg.settle();
+  const data = bg.chrome.storage.local.data;
+  assert.deepEqual(data.queue.map((q) => q.id), ["bb02"]);
+  assert.equal(data.inFlight, undefined);
+  assert.deepEqual(data.history.map((h) => h.status), ["working", "fail", "fail", "fail", "ok"]);
+  assert.deepEqual(missedSteps(bg).sort(), [
+    ["aa01", "expensify", "No word back from Expensify"],
+    ["cc03", "sparkreceipt", "No word back from SparkReceipt"]
+  ]);
+  assert.ok(badges(bg).includes("!"));
+  // Something is still waiting, so it keeps watching
+  assert.equal(bg.intervals.filter((i) => i.live).length, 1);
+});
+
+test("on start with nothing waiting, nothing changes", async () => {
+  const bg = loadBackground({ local: { history: [{ id: "a", ts: Date.now(), status: "working" }] } });
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(callsTo(bg.calls, "action.setBadgeText").length, 0);
+  assert.equal(bg.intervals.length, 0);
+  assert.equal(bg.chrome.storage.local.data.activityLog, undefined);
+});
+
+test("a receipt stuck in flight is cleared when the next grab starts", async () => {
+  const bg = loadBackground({ sync: { destination: "none" }, local: { inFlight: [{ id: "ff01", service: "expensify", startedAt: Date.now() }] } });
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.inFlight.length, 1);
+  bg.chrome.storage.local.data.inFlight[0].startedAt = Date.now() - 4 * 60 * 1000;
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+  assert.deepEqual(missedSteps(bg), [["ff01", "expensify", "No word back from Expensify"]]);
+});
+
+test("if the service page never reports back, the grab is marked missed and the badge shows !", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(badges(bg).pop(), "...");
+  assert.equal(bg.intervals.filter((i) => i.live).length, 1);
+  const id = bg.chrome.storage.local.data.history[0].id;
+
+  // Four minutes in: still waiting
+  const start = Date.now();
+  bg.evalIn("Date.now = () => " + (start + 4 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+
+  // Six minutes with no word from the page: a miss
+  bg.evalIn("Date.now = () => " + (start + 6 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "fail");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 0);
+  assert.equal(badges(bg).pop(), "", "the ! is flashed, then cleared");
+  assert.ok(badges(bg).includes("!"));
+  assert.deepEqual(missedSteps(bg), [[id, "sparkreceipt", "No word back from SparkReceipt"]]);
+  assert.equal(callsTo(bg.calls, "downloads.removeFile").length, 0, "the backup file is kept");
+
+  // Nothing left to watch
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.intervals.filter((i) => i.live).length, 0);
+});
+
+test("a page that is still talking isn't timed out", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  const start = Date.now();
+  bg.evalIn("Date.now = () => " + (start + 4 * 60 * 1000));
+  await bg.send({ type: "logStep", step: "sign_in_needed" }, SPARK_SENDER);
+  bg.evalIn("Date.now = () => " + (start + 8 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+  assert.deepEqual(missedSteps(bg), []);
+});
+
+test("the privacy policy's limit on waiting receipts matches the code", () => {
+  const { evalIn } = loadBackground();
+  const minutes = evalIn("QUEUE_MAX_AGE_MS") / 60000;
+  assert.equal(minutes, 10);
+  for (const doc of ["PRIVACY.md", "privacy.html"]) {
+    assert.match(read(doc), new RegExp("still waiting after " + minutes + " minutes is cleared"), doc);
+  }
+});
+
 // ---------- Recent Grabs ----------
 
 test("Recent Grabs keeps the newest ten, newest first", async () => {
