@@ -167,7 +167,8 @@ function sparkPage(opts) {
   types.forEach((t) => {
     t.onclick = () => {
       page[".add-document-modal-body"] = [el("")];
-      page['.file-dropzone input[type="file"]'] = [input];
+      if (o.modalInput) page['.add-document-modal-body input[type="file"]'] = [input];
+      if (!o.noDropzone) page['.file-dropzone input[type="file"]'] = [input];
       page["button"] = o.noConfirm ? [add] : [add, confirm];
     };
   });
@@ -268,6 +269,38 @@ test("SparkReceipt: no Confirm button means a miss, with the file left attached"
   assert.deepEqual(run.flow(), ["getPendingReceipt"]);
   await run.tick(1500);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
+});
+
+test("SparkReceipt: never uses a file field outside the add-document window", async () => {
+  const app = sparkPage({ noDropzone: true });
+  const avatar = el("", { files: null });
+  app.page['input[type="file"]'] = [avatar];
+  const run = await start("sparkdrop.js", PAYLOAD, app.page);
+  await run.tick();
+  assert.equal(app.add.clicks, 1);
+  await run.tick();
+  assert.equal(app.types[0].clicks, 1);
+  await run.tick(30000);
+  assert.equal(avatar.files, null);
+  assert.equal(app.input.files, null);
+  await run.tick(31000);
+  assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
+  assert.equal(app.confirm.clicks, 0);
+});
+
+test("SparkReceipt: a file field inside the add-document window still works", async () => {
+  const app = sparkPage({ noDropzone: true, modalInput: true });
+  const avatar = el("", { files: null });
+  app.page['input[type="file"]'] = [avatar];
+  const run = await start("sparkdrop.js", PAYLOAD, app.page);
+  await run.tick();
+  await run.tick();
+  await run.tick();
+  assert.equal(avatar.files, null);
+  assert.equal(app.input.files.length, 1);
+  await run.tick(1000);
+  assert.equal(app.confirm.clicks, 1);
+  assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"]);
 });
 
 test("SparkReceipt: ignores a receipt meant for Expensify, or no receipt", async () => {
@@ -487,7 +520,7 @@ test("tripwire: the hand-verified selectors and timings are unchanged", () => {
     'document.querySelector("button.sidebar-add-document-cta")',
     'document.querySelectorAll("button.add-document-type-option")',
     "document.querySelector('.file-dropzone input[type=\"file\"]')",
-    "document.querySelector('input[type=\"file\"]')",
+    "document.querySelector('.add-document-modal-body input[type=\"file\"]')",
     'document.querySelector(".add-document-modal-body")',
     "/add documents?/i",
     "/^confirm$/i",

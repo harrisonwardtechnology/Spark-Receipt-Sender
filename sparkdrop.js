@@ -144,10 +144,13 @@
     );
   }
 
+  // The upload field in the add-document window. If the drop zone's class
+  // ever changes, a file field inside that window will do, but never some
+  // other file field elsewhere on the page.
   function getInput() {
     return (
       document.querySelector('.file-dropzone input[type="file"]') ||
-      document.querySelector('input[type="file"]')
+      document.querySelector('.add-document-modal-body input[type="file"]')
     );
   }
 
