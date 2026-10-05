@@ -607,6 +607,7 @@ async function runBatch(windowId) {
     detail: tabCount(targets.length)
   });
 
+  let failed = 0;
   for (let i = 0; i < targets.length; i++) {
     const tab = targets[i];
     await setBadge(i + 1 + "/" + targets.length, "#5f6368");
@@ -634,17 +635,24 @@ async function runBatch(windowId) {
       console.warn("Batch grab failed for tab", tab.url, e);
       logEvent("grab_failed", { grabId: entryId, detail: reasonOf(e) });
       await historyUpdate(entryId, "fail");
+      failed++;
     }
   }
 
-  if (settings.destination === "autodrop") {
+  const grabbed = targets.length - failed;
+  if (settings.destination === "autodrop" && grabbed > 0) {
     await openServiceTab(settings);
   }
   logEvent("batch_finished", {
     service: settings.service,
-    detail: tabCount(targets.length)
+    detail: batchSummary(targets.length, failed)
   });
-  await flashBadge("OK", "#188038");
+  // OK only if every tab made it
+  if (failed) {
+    await flashBadge("!", "#d93025");
+  } else {
+    await flashBadge("OK", "#188038");
+  }
 }
 
 // ---------- delivery ----------
@@ -1018,6 +1026,14 @@ function reasonOf(e) {
 
 function tabCount(n) {
   return n === 1 ? "1 tab" : n + " tabs";
+}
+
+function batchSummary(total, failed) {
+  if (!failed) return tabCount(total);
+  return (
+    total - failed + " of " + tabCount(total) + " grabbed. " +
+    failed + " didn't work."
+  );
 }
 
 function handoffText(destination) {

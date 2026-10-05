@@ -540,6 +540,47 @@ test("a full-page capture that fails partway still puts the page back", async ()
   assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [120]]);
 });
 
+// ---------- Grab All Tabs ----------
+
+async function batch(failOn) {
+  const tabs = [
+    { id: 11, windowId: 1, url: "https://www.example.com/order/1" },
+    { id: 12, windowId: 1, url: "https://shop.example.org/order/2" },
+    { id: 13, windowId: 1, url: "chrome://settings" }
+  ];
+  const bg = loadBackground({ tabs: (q) => (q.windowId ? tabs : []) });
+  let shot = 0;
+  bg.chrome.tabs.captureVisibleTab = async () => {
+    shot++;
+    if (failOn.includes(shot)) throw new Error("Capture failed");
+    return "data:image/jpeg;base64,/9j/AAAA";
+  };
+  await bg.sandbox.runBatch(1);
+  await bg.settle();
+  const done = (bg.chrome.storage.local.data.activityLog || []).find((e) => e.step === "batch_finished");
+  const lastBadge = callsTo(bg.calls, "action.setBadgeText").map((c) => c[1].text).filter((t) => t).pop();
+  return { bg, detail: done && done.detail, lastBadge, opened: callsTo(bg.calls, "tabs.create").length };
+}
+
+test("Grab All Tabs shows OK only when every tab made it", async () => {
+  const all = await batch([]);
+  assert.equal(all.lastBadge, "OK");
+  assert.equal(all.detail, "2 tabs");
+  assert.equal(all.opened, 1);
+  assert.equal(all.bg.chrome.storage.local.data.queue.length, 2);
+
+  const some = await batch([2]);
+  assert.equal(some.lastBadge, "!");
+  assert.equal(some.detail, "1 of 2 tabs grabbed. 1 didn't work.");
+  assert.equal(some.opened, 1);
+  assert.deepEqual(some.bg.chrome.storage.local.data.history.map((h) => h.status), ["fail", "working"]);
+
+  const none = await batch([1, 2]);
+  assert.equal(none.lastBadge, "!");
+  assert.equal(none.detail, "0 of 2 tabs grabbed. 2 didn't work.");
+  assert.equal(none.opened, 0, "nothing to drop, so the service isn't opened");
+});
+
 // ---------- finishing an upload ----------
 
 async function finishedGrab(sync, success, opts) {

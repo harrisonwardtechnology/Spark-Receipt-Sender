@@ -71,7 +71,7 @@ The settings page opens when you install. Add your SparkReceipt forwarding email
 - Or right-click an image and choose **Send This Image to SparkReceipt**.
 - Or press **Alt+Shift+S**.
 
-Watch the toolbar badge: OK means the upload landed, ! means take a look at the tab.
+Watch the toolbar badge: OK means the upload landed, ! means take a look at the tab (the Activity Log on the settings page says what happened). After Grab All Tabs, OK means every tab was grabbed, and ! means at least one wasn't.
 
 ## Settings
 
