@@ -78,10 +78,13 @@ async function start(file, payload, page, pathname, opts) {
     const node = el("");
     node.style = {};
     node.children = [];
-    node.setAttribute = (k, v) => (node.attrs[k] = v);
-    node.addEventListener = () => {};
+    node.setAttribute = (k, v) => (node.attrs[k] = String(v));
+    node.listeners = {};
+    node.addEventListener = (type, fn) => (node.listeners[type] = (node.listeners[type] || []).concat(fn));
     node.appendChild = (child) => node.children.push(child);
-    node.remove = () => {};
+    node.remove = () => {
+      node.removed = true;
+    };
     return node;
   };
   const sandbox = {
@@ -137,6 +140,7 @@ async function start(file, payload, page, pathname, opts) {
     intervals,
     location: sandbox.location,
     banner: () => (byId["spark-sender-banner-text"] || {}).textContent,
+    bannerBox: () => byId["spark-sender-banner"],
     // Move the clock, run every live timer once, then let any replies from
     // the extension land.
     async tick(ms) {
@@ -507,10 +511,35 @@ test("corner notes can't be mistaken for the page elements the scripts look for"
   for (const file of ["sparkdrop.js", "expensifydrop.js"]) {
     const texts = bannerTexts(file);
     assert.ok(texts.length >= 7, file);
+    // The close control is named "Close" for screen readers
+    texts.push("Close");
     for (const text of texts) {
       assert.doesNotMatch(text, /drag and drop them here/i);
+      assert.doesNotMatch(text, /add documents?/i);
+      assert.doesNotMatch(text, /create expense|scan receipt/i);
       assert.doesNotMatch(text, /^(confirm|scan|create expense|submit expense|track expense)$/i);
     }
+  }
+});
+
+test("the corner note's close control works from the keyboard", async () => {
+  for (const [file, payload] of [["sparkdrop.js", PAYLOAD], ["expensifydrop.js", EXP]]) {
+    for (const key of ["Enter", " "]) {
+      const run = await start(file, payload, {});
+      const box = run.bannerBox();
+      const close = box.children.find((c) => c.attrs.role === "button");
+      assert.ok(close, file + " has a close control");
+      assert.equal(close.attrs.tabindex, "0");
+      assert.equal(close.attrs["aria-label"], "Close");
+      let prevented = false;
+      close.listeners.keydown.forEach((fn) => fn({ key: "Tab", preventDefault: () => (prevented = true) }));
+      assert.ok(!box.removed && !prevented, "Tab moves on and leaves the note alone");
+      close.listeners.keydown.forEach((fn) => fn({ key, preventDefault: () => (prevented = true) }));
+      assert.ok(box.removed && prevented, file + " closes on " + JSON.stringify(key));
+    }
+    const src = read(file);
+    // Not a <button>: the script looks through the page's buttons
+    assert.doesNotMatch(src, /createElement\("button"\)/);
   }
 });
 

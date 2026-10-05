@@ -246,12 +246,23 @@
         "background:#0f766e;color:#ffffff;font:13px/1.45 -apple-system," +
         "BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;" +
         "box-shadow:0 4px 14px rgba(0,0,0,0.25);";
+      // A span with a button role, not a <button>, so it never shows up
+      // when this script looks through the page's own buttons.
       const close = document.createElement("span");
       close.textContent = "×";
+      close.setAttribute("role", "button");
+      close.setAttribute("tabindex", "0");
+      close.setAttribute("aria-label", "Close");
       close.style.cssText =
         "position:absolute;top:6px;right:12px;cursor:pointer;" +
-        "font-size:16px;opacity:0.85;";
+        "font-size:16px;opacity:0.85;border-radius:4px;";
       close.addEventListener("click", () => el.remove());
+      close.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          el.remove();
+        }
+      });
       const msg = document.createElement("span");
       msg.id = "spark-sender-banner-text";
       el.appendChild(msg);
