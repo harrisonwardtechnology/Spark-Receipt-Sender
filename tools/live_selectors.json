@@ -1,0 +1,52 @@
+{
+  "about": "What tools/live_check.py looks for on the live sites. A copy of the selectors and button text in sparkdrop.js and expensifydrop.js, kept in step by test/livecheck.test.js. The content scripts don't read this file. If you change a selector in a content script, change it here too and the test will tell you if they drift.",
+  "sparkreceipt": {
+    "name": "SparkReceipt",
+    "script": "sparkdrop.js",
+    "url": "https://app.sparkreceipt.com/",
+    "selectors": {
+      "signInField": "input[type=\"password\"]",
+      "addButton": "button.sidebar-add-document-cta",
+      "anyButton": "button",
+      "typeOption": "button.add-document-type-option",
+      "fileInput": ".file-dropzone input[type=\"file\"]",
+      "fileInputBackup": ".add-document-modal-body input[type=\"file\"]",
+      "modal": ".add-document-modal-body"
+    },
+    "text": {
+      "addButton": "/add documents?/i",
+      "typeExpense": "/expense or receipt/i",
+      "typeIncome": "/income or invoice/i",
+      "typeStatement": "/bank or credit card statement/i",
+      "typeOther": "/other document/i",
+      "confirmButton": "/^confirm$/i"
+    },
+    "neverClick": ["confirmButton"]
+  },
+  "expensify": {
+    "name": "Expensify",
+    "script": "expensifydrop.js",
+    "url": "https://new.expensify.com/",
+    "selectors": {
+      "signInHint": "input[aria-label*=\"Phone or email\" i], input[placeholder*=\"Phone or email\" i]",
+      "signInField": "input[type=\"password\"]",
+      "scanButton": "[data-testid=\"floating-receipt-button\"]",
+      "actionButton": "[data-testid=\"floating-action-button\"]",
+      "clickables": "button, [role=\"button\"], [role=\"menuitem\"], [role=\"tab\"]",
+      "textHolders": "div, span",
+      "buttons": "button, [role=\"button\"]"
+    },
+    "text": {
+      "menuItem": "/^(create expense|submit expense|track expense|scan receipt)$/i",
+      "menuItemLoose": "/create expense/i",
+      "scanTab": "/^scan$/i",
+      "dropZone": "/drag and drop them here/i",
+      "createExpense": "/^create expense$/i",
+      "submitExpense": "/^submit expense$/i",
+      "trackExpense": "/^track expense$/i",
+      "createAmount": "/^create \\$/i",
+      "submitAmount": "/^submit \\$/i"
+    },
+    "neverClick": ["createExpense", "submitExpense", "trackExpense", "createAmount", "submitAmount"]
+  }
+}
