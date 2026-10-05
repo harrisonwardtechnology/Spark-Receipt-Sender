@@ -415,6 +415,20 @@ test("the result is only sent once the extension has taken the receipt", async (
   }
 });
 
+test("each page asks for its own service's receipt and names it when done", async () => {
+  for (const [file, app, payload, service] of [
+    ["sparkdrop.js", sparkPage(), PAYLOAD, "sparkreceipt"],
+    ["expensifydrop.js", expensifyPage(), EXP, "expensify"]
+  ]) {
+    const run = await start(file, payload, app.page, "/create/scan");
+    for (let i = 0; i < 4; i++) await run.tick(1300);
+    const sent = run.messages.filter((m) => m.type !== "logStep");
+    assert.deepEqual(clone(sent[0]), { type: "getPendingReceipt", service }, file);
+    assert.deepEqual(clone(sent[1]), { type: "receiptConsumed", id: PAYLOAD.id }, file);
+    assert.deepEqual(clone(sent[2]), { type: "dropFinished", success: true, id: PAYLOAD.id }, file);
+  }
+});
+
 // ---------- Activity Log notes ----------
 
 test("log notes ride along but never change the upload messages", async () => {

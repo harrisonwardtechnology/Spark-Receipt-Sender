@@ -136,14 +136,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // The three upload messages run one after another, in the order they
   // arrive, so a quick "finished" can't overtake the "consumed" before it.
   if (msg.type === "getPendingReceipt") {
-    withQueue(() => getQueueHead())
+    // Each service page only gets receipts meant for it
+    const service = serviceOfSender(sender) || knownService(msg.service);
+    if (!service) {
+      sendResponse(null);
+      return false;
+    }
+    withQueue(() => getQueueHead(service))
       .then((head) => sendResponse(head))
       .catch(() => sendResponse(null));
     return true;
   }
 
   if (msg.type === "receiptConsumed") {
-    withQueue(() => consumeHead())
+    withQueue(() => consumeHead(serviceOfSender(sender), msg.id))
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -198,13 +204,22 @@ const PAGE_STEPS = [
   "service_note"
 ];
 
+// Which service page a message came from, or null.
+function serviceOfSender(sender) {
+  const url = (sender && typeof sender.url === "string" && sender.url) || "";
+  if (url.startsWith(SERVICES.sparkreceipt.appUrl)) return "sparkreceipt";
+  if (url.startsWith(SERVICES.expensify.appUrl)) return "expensify";
+  return null;
+}
+
+function knownService(name) {
+  return Object.prototype.hasOwnProperty.call(SERVICES, name) ? name : null;
+}
+
 function noteServiceStep(msg, sender) {
   try {
     if (PAGE_STEPS.indexOf(msg.step) === -1) return;
-    const url = (sender && typeof sender.url === "string" && sender.url) || "";
-    let service = null;
-    if (url.startsWith(SERVICES.sparkreceipt.appUrl)) service = "sparkreceipt";
-    if (url.startsWith(SERVICES.expensify.appUrl)) service = "expensify";
+    const service = serviceOfSender(sender);
     if (!service) return;
     logEvent(msg.step, {
       grabId: msg.grabId,
@@ -249,16 +264,53 @@ async function enqueue(item) {
   await setQueue(queue);
 }
 
-async function getQueueHead() {
-  const queue = await getQueue();
-  return queue.length ? queue[0] : null;
+// Queued receipts from before 4.1.1 may not name a service.
+function serviceOfItem(item) {
+  return (item && knownService(item.service)) || "sparkreceipt";
 }
 
-async function consumeHead() {
+// The oldest receipt for a service (or the oldest of all, with no service).
+// Receipts for the other service wait their turn without blocking this one.
+async function getQueueHead(service) {
   const queue = await getQueue();
-  const head = queue.shift() || null;
+  return queue.find((i) => !service || serviceOfItem(i) === service) || null;
+}
+
+// Receipts a service page has taken but not yet reported on. Only what's
+// needed to finish up is kept here, never the image itself.
+async function getInFlight() {
+  const { inFlight } = await chrome.storage.local.get("inFlight");
+  const list = Array.isArray(inFlight) ? inFlight : inFlight ? [inFlight] : [];
+  return list.filter((i) => i && typeof i === "object");
+}
+
+async function setInFlight(list) {
+  if (list.length) {
+    await chrome.storage.local.set({ inFlight: list });
+  } else {
+    await chrome.storage.local.remove("inFlight");
+  }
+}
+
+// Take a receipt off the queue: the one with this id if the page names it,
+// otherwise the oldest for that service.
+async function consumeHead(service, id) {
+  const queue = await getQueue();
+  let at = typeof id === "string" ? queue.findIndex((i) => i.id === id) : -1;
+  if (at === -1) {
+    at = queue.findIndex((i) => !service || serviceOfItem(i) === service);
+  }
+  if (at === -1) return;
+  const item = queue.splice(at, 1)[0];
   await setQueue(queue);
-  await chrome.storage.local.set({ inFlight: head });
+  const list = await getInFlight();
+  list.push({
+    id: item.id,
+    service: serviceOfItem(item),
+    downloadId: item.downloadId,
+    startedAt: Date.now()
+  });
+  await setInFlight(list);
 }
 
 async function handleDropFinished(msg, sender) {
@@ -266,7 +318,14 @@ async function handleDropFinished(msg, sender) {
     msg.success ? "OK" : "!",
     msg.success ? "#188038" : "#d93025"
   );
-  const { inFlight } = await chrome.storage.local.get("inFlight");
+  const service = serviceOfSender(sender);
+  const list = await getInFlight();
+  let at = typeof msg.id === "string" ? list.findIndex((i) => i.id === msg.id) : -1;
+  if (at === -1 && service) {
+    at = list.findIndex((i) => serviceOfItem(i) === service);
+  }
+  if (at === -1 && list.length) at = 0;
+  const inFlight = at === -1 ? null : list[at];
   const settings = await loadSettings();
   const queue = await getQueue();
 
@@ -290,22 +349,29 @@ async function handleDropFinished(msg, sender) {
         // best effort
       }
     }
-    await chrome.storage.local.remove("inFlight");
+    list.splice(at, 1);
+    await setInFlight(list);
   }
 
-  if (queue.length > 0) {
-    // More receipts waiting: run the next one through the same tab
-    await openServiceTab(settings);
+  const here = service || (inFlight ? serviceOfItem(inFlight) : settings.service);
+  if (queue.some((i) => serviceOfItem(i) === here)) {
+    // More receipts for this service: run the next one through the same tab
+    await openServiceTab({ ...settings, service: here });
     return;
   }
 
   if (msg.success && settings.closeTab && sender && sender.tab && sender.tab.id) {
     try {
       await chrome.tabs.remove(sender.tab.id);
-      logEvent("tab_closed", { service: settings.service });
+      logEvent("tab_closed", { service: here });
     } catch (e) {
       // tab already closed
     }
+  }
+
+  if (queue.length > 0) {
+    // Receipts for the other service are waiting: open that one next
+    await openServiceTab({ ...settings, service: serviceOfItem(queue[0]) });
   }
 }
 

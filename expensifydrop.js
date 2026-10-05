@@ -8,7 +8,10 @@
 (async function () {
   let payload = null;
   try {
-    payload = await chrome.runtime.sendMessage({ type: "getPendingReceipt" });
+    payload = await chrome.runtime.sendMessage({
+      type: "getPendingReceipt",
+      service: "expensify"
+    });
   } catch (e) {
     return;
   }
@@ -197,7 +200,7 @@
 
   function finish(message, success) {
     clearInterval(timer);
-    consumed = tell({ type: "receiptConsumed" });
+    consumed = tell({ type: "receiptConsumed", id: payload.id });
     showBanner(message, true);
     if (success && (payload.closeTab || payload.deleteLocal)) {
       settleThenTidy();
@@ -236,7 +239,9 @@
   }
 
   function sendFinished(ok) {
-    consumed.then(() => tell({ type: "dropFinished", success: ok }));
+    consumed.then(() =>
+      tell({ type: "dropFinished", success: ok, id: payload.id })
+    );
   }
 
   // Wait for the create flow to wrap up, then let the extension tidy up.

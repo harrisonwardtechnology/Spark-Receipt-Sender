@@ -141,12 +141,70 @@ test("receipts older than ten minutes drop out of the queue", async () => {
   assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["new"]);
 });
 
-test("taking the head of the queue marks it as in flight", async () => {
-  const bg = loadBackground({ local: { queue: [{ id: "a", createdAt: Date.now() }] } });
+test("taking the head of the queue marks it as in flight, without the image", async () => {
+  const bg = loadBackground({ local: { queue: [{ id: "a", service: "sparkreceipt", b64: "/9j/AAAA", downloadId: 3, createdAt: Date.now() }] } });
   await bg.sandbox.consumeHead();
-  assert.equal(bg.chrome.storage.local.data.inFlight.id, "a");
+  const inFlight = clone(bg.chrome.storage.local.data.inFlight);
+  assert.equal(inFlight.length, 1);
+  assert.equal(inFlight[0].id, "a");
+  assert.equal(inFlight[0].service, "sparkreceipt");
+  assert.equal(inFlight[0].downloadId, 3);
+  assert.equal(typeof inFlight[0].startedAt, "number");
+  assert.equal(inFlight[0].b64, undefined);
   assert.equal(bg.chrome.storage.local.data.queue.length, 0);
   assert.equal(await bg.sandbox.getQueueHead(), null);
+});
+
+test("each service page gets the oldest receipt for its own service", async () => {
+  const now = Date.now();
+  const bg = loadBackground({
+    local: {
+      queue: [
+        { id: "e1", service: "expensify", createdAt: now },
+        { id: "s1", service: "sparkreceipt", createdAt: now },
+        { id: "e2", service: "expensify", createdAt: now },
+        { id: "s2", service: "sparkreceipt", createdAt: now }
+      ]
+    }
+  });
+  const EXP_SENDER = { id: "testextensionid", url: "https://new.expensify.com/", tab: { id: 101 } };
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply.id, "s1");
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "expensify" }, EXP_SENDER)).reply.id, "e1");
+  // The page that sent the message decides, not what the message claims
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "expensify" }, SPARK_SENDER)).reply.id, "s1");
+  // Anything else gets nothing
+  assert.equal((await bg.send({ type: "getPendingReceipt" }, { url: "https://evil.example.com/" })).reply, null);
+
+  await bg.send({ type: "receiptConsumed", id: "s1" }, SPARK_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e1", "e2", "s2"]);
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply.id, "s2");
+  await bg.send({ type: "receiptConsumed", id: "e1" }, EXP_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e2", "s2"]);
+  assert.deepEqual(bg.chrome.storage.local.data.inFlight.map((q) => q.id), ["s1", "e1"]);
+
+  // Each page's result goes to its own receipt
+  await bg.send({ type: "dropFinished", success: true, id: "e1" }, EXP_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.inFlight.map((q) => q.id), ["s1"]);
+  await bg.send({ type: "dropFinished", success: true }, SPARK_SENDER);
+  assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+});
+
+test("a receipt for the other service doesn't hold up this one, and is opened next", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.enqueue({ id: "e1", service: "expensify", createdAt: Date.now() });
+  await bg.sandbox.historyAdd({ id: "e1", status: "working" });
+  await bg.sandbox.run(TAB); // SparkReceipt is the chosen service
+  await bg.settle();
+  const head = (await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply;
+  assert.equal(head.service, "sparkreceipt");
+  await bg.send({ type: "receiptConsumed", id: head.id }, SPARK_SENDER);
+  await bg.send({ type: "dropFinished", success: true, id: head.id }, SPARK_SENDER);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "ok");
+  assert.equal(bg.chrome.storage.local.data.history[1].status, "working");
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e1"]);
+  const opened = callsTo(bg.calls, "tabs.create").map((c) => c[1].url);
+  assert.deepEqual(opened, ["https://app.sparkreceipt.com/", "https://new.expensify.com/"]);
 });
 
 test("a captured image is queued without its folder or data URL wrapper", async () => {
