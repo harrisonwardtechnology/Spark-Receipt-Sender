@@ -63,6 +63,8 @@ const TIMING = {
   // How often to check while receipts are waiting
   watchEveryMs: 20 * 1000
 };
+// Full-page grabs stop at this many screens. Longer pages are cut short, and
+// the user is told (Activity Log, the note on the service page, or the badge).
 const MAX_SLICES = 12;
 const HISTORY_MAX = 10;
 
@@ -669,6 +671,12 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
   });
   await waitForDownload(downloadId);
   logEvent("file_saved", { grabId: entryId, detail: filename });
+  if (capture.cutShort) {
+    logEvent("page_cut_short", {
+      grabId: entryId,
+      detail: "Only the top " + MAX_SLICES + " screens were saved"
+    });
+  }
 
   if (
     settings.reveal &&
@@ -700,7 +708,11 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
       detail: handoffText(settings.destination)
     });
     await historyUpdate(entryId, "saved");
-    await flashBadge("OK", "#188038");
+    if (capture.cutShort) {
+      await flashBadge("CUT", "#b06000"); // saved, but only the top part
+    } else {
+      await flashBadge("OK", "#188038");
+    }
   }
 }
 
@@ -719,7 +731,9 @@ async function enqueueCapture(capture, filename, settings, downloadId, entryId) 
     createdAt: Date.now(),
     downloadId: downloadId,
     closeTab: !!settings.closeTab,
-    deleteLocal: !!settings.deleteLocal
+    deleteLocal: !!settings.deleteLocal,
+    // the service page mentions it in its note
+    cutShort: capture.cutShort ? MAX_SLICES : 0
   });
 }
 
@@ -800,10 +814,8 @@ async function captureFullPage(tab) {
     })
   });
   const m = metrics.result;
-  const slices = Math.min(
-    MAX_SLICES,
-    Math.max(1, Math.ceil(m.scrollHeight / m.viewport))
-  );
+  const needed = Math.max(1, Math.ceil(m.scrollHeight / m.viewport));
+  const slices = Math.min(MAX_SLICES, needed);
 
   const shots = [];
   try {
@@ -879,7 +891,8 @@ async function captureFullPage(tab) {
   const buf = await outBlob.arrayBuffer();
   return {
     url: "data:image/jpeg;base64," + bufToBase64(buf),
-    ext: "jpg"
+    ext: "jpg",
+    cutShort: needed > slices
   };
 }
 

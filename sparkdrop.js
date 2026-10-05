@@ -266,6 +266,18 @@
       const msg = document.createElement("span");
       msg.id = "spark-sender-banner-text";
       el.appendChild(msg);
+      const cut = Math.round(Number(payload && payload.cutShort)) || 0;
+      if (cut > 0) {
+        // The grab stopped at the extension's limit on very long pages
+        const note = document.createElement("span");
+        note.id = "spark-sender-banner-note";
+        note.style.cssText = "display:block;margin-top:4px;";
+        note.textContent =
+          "This page was long, so only the top " +
+          cut +
+          " screens were captured.";
+        el.appendChild(note);
+      }
       el.appendChild(close);
       document.documentElement.appendChild(el);
     }

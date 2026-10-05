@@ -558,6 +558,46 @@ test("a full-page capture that fails partway still puts the page back", async ()
   assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [120]]);
 });
 
+test("a page taller than 12 screens is cut short, and says so", async () => {
+  let bg = loadBackground();
+  let page = fakePage(bg, { height: 20000 });
+  const tall = await bg.sandbox.captureFullPage(TAB);
+  assert.equal(page.shots(), 12);
+  assert.equal(tall.cutShort, true);
+
+  bg = loadBackground();
+  page = fakePage(bg, { height: 12 * 700 });
+  assert.equal((await bg.sandbox.captureFullPage(TAB)).cutShort, false);
+  assert.equal(page.shots(), 12);
+});
+
+test("a cut-short grab is logged, noted for the service page, and badged", async () => {
+  let bg = loadBackground();
+  fakePage(bg, { height: 20000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  const cut = bg.chrome.storage.local.data.activityLog.find((e) => e.step === "page_cut_short");
+  assert.equal(cut.detail, "Only the top 12 screens were saved");
+  assert.equal(cut.grabId, bg.chrome.storage.local.data.history[0].id);
+  assert.equal(bg.chrome.storage.local.data.queue[0].cutShort, 12);
+
+  bg = loadBackground({ sync: { destination: "none" } });
+  fakePage(bg, { height: 20000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.ok(badges(bg).includes("CUT"));
+  assert.ok(!badges(bg).includes("OK"));
+  assert.deepEqual(steps(bg), ["grab_started", "file_saved", "page_cut_short", "saved_only"]);
+
+  // A page that fits is not marked
+  bg = loadBackground();
+  fakePage(bg, { height: 2000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.queue[0].cutShort, 0);
+  assert.ok(!steps(bg).includes("page_cut_short"));
+});
+
 // ---------- Grab All Tabs ----------
 
 async function batch(failOn) {

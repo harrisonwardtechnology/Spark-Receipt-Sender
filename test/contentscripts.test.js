@@ -543,6 +543,17 @@ test("the corner note's close control works from the keyboard", async () => {
   }
 });
 
+test("the corner note says when a long page was cut short", async () => {
+  for (const [file, payload] of [["sparkdrop.js", PAYLOAD], ["expensifydrop.js", EXP]]) {
+    let run = await start(file, { ...payload, cutShort: 12 }, {});
+    let note = run.bannerBox().children.find((c) => c.id === "spark-sender-banner-note");
+    assert.equal(note.textContent, "This page was long, so only the top 12 screens were captured.", file);
+    run = await start(file, payload, {});
+    note = run.bannerBox().children.find((c) => c.id === "spark-sender-banner-note");
+    assert.equal(note, undefined, file);
+  }
+});
+
 test("tripwire: the hand-verified selectors and timings are unchanged", () => {
   const spark = read("sparkdrop.js");
   for (const needle of [

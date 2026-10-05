@@ -84,7 +84,7 @@ Click **Settings** in the popup, or right-click the toolbar icon and choose Opti
 
 ## Activity Log
 
-The settings page keeps a running record of what the extension did: grab started, file saved, service opened, upload confirmed or missed (with the reason), tab closed, backup deleted, and settings changed.
+The settings page keeps a running record of what the extension did: grab started, file saved, page cut short, service opened, upload confirmed or missed (with the reason), tab closed, backup deleted, and settings changed.
 
 - It lives in the extension's storage on your computer. Nothing is sent anywhere.
 - It records site names only. Never page contents, file contents, page titles, or full web addresses.
@@ -150,7 +150,7 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is
 - SparkReceipt grabs land as the document type you picked in the popup (Expense or Receipt by default). Expensify grabs land as scanned expenses.
 - Expensify rejects files under 240 bytes, which never matters for real receipts.
 - Gmail and mail app drafts address themselves to the right place for each service: your SparkReceipt forwarding address, or receipts@expensify.com (send from your Expensify sign-in email).
-- Very long pages are captured up to 12 screens tall.
+- Very long pages are captured up to 12 screens tall. When a page is cut short, the Activity Log says so, the note on the SparkReceipt or Expensify page mentions it, and with the other After Grabbing choices the toolbar badge shows CUT instead of OK.
 - Chrome's own pages and the Chrome Web Store can't be captured.
 - Because it's loaded unpacked, Chrome may occasionally remind you about developer mode extensions. You can dismiss that.
 
