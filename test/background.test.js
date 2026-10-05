@@ -470,6 +470,58 @@ test("nothing private reaches extension storage besides the queued image", async
   }
 });
 
+// ---------- full-page capture ----------
+
+// A stand-in page that can be scrolled and captured, `height` pixels tall in
+// a 700 pixel window. Notes the arguments of every script run in it.
+function fakePage(bg, opts) {
+  const o = opts || {};
+  const scripts = [];
+  let shots = 0;
+  bg.chrome.scripting.executeScript = async (details) => {
+    scripts.push(details.args ? details.args.slice() : "metrics");
+    if (!details.args) {
+      return [{ result: { scrollHeight: o.height, viewport: 700, width: 1000, dpr: 1, originalY: 120 } }];
+    }
+    return [{ result: null }];
+  };
+  bg.chrome.tabs.captureVisibleTab = async () => {
+    shots++;
+    if (shots === o.failOnShot) throw new Error("Too many captures");
+    return "data:image/png;base64,iVBORw0KGgo=";
+  };
+  bg.sandbox.fetch = async () => ({ blob: async () => ({}) });
+  bg.sandbox.createImageBitmap = async () => ({ width: 1000, height: 700 });
+  bg.sandbox.OffscreenCanvas = class {
+    constructor(w, h) {
+      this.size = [w, h];
+    }
+    getContext() {
+      return { drawImage() {} };
+    }
+    async convertToBlob() {
+      return { arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    }
+  };
+  return { scripts, shots: () => shots };
+}
+
+test("a full-page capture puts the page back the way it was", async () => {
+  const bg = loadBackground();
+  const page = fakePage(bg, { height: 2000 });
+  const capture = await bg.sandbox.captureFullPage(TAB);
+  assert.equal(capture.ext, "jpg");
+  assert.equal(page.shots(), 3);
+  assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [1300, true], [120]]);
+});
+
+test("a full-page capture that fails partway still puts the page back", async () => {
+  const bg = loadBackground();
+  const page = fakePage(bg, { height: 3000, failOnShot: 2 });
+  await assert.rejects(bg.sandbox.captureFullPage(TAB), /Too many captures/);
+  assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [120]]);
+});
+
 // ---------- finishing an upload ----------
 
 async function finishedGrab(sync, success, opts) {

@@ -795,47 +795,53 @@ async function captureFullPage(tab) {
   );
 
   const shots = [];
-  for (let i = 0; i < slices; i++) {
-    const targetY = Math.min(i * m.viewport, m.scrollHeight - m.viewport);
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: (y, hideFixed) => {
-        if (hideFixed && !window.__rsHidden) {
-          window.__rsHidden = [];
-          document.querySelectorAll("*").forEach((el) => {
-            const pos = getComputedStyle(el).position;
-            if (pos === "fixed" || pos === "sticky") {
-              window.__rsHidden.push([el, el.style.visibility]);
-              el.style.visibility = "hidden";
-            }
-          });
-        }
-        window.scrollTo(0, y);
-      },
-      args: [Math.max(0, targetY), i > 0]
-    });
-    await sleep(650); // render + captureVisibleTab rate limit
-    const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-      format: "png"
-    });
-    shots.push({ y: Math.max(0, targetY), dataUrl: dataUrl });
-    if (slices === 1) break;
+  try {
+    for (let i = 0; i < slices; i++) {
+      const targetY = Math.min(i * m.viewport, m.scrollHeight - m.viewport);
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (y, hideFixed) => {
+          if (hideFixed && !window.__rsHidden) {
+            window.__rsHidden = [];
+            document.querySelectorAll("*").forEach((el) => {
+              const pos = getComputedStyle(el).position;
+              if (pos === "fixed" || pos === "sticky") {
+                window.__rsHidden.push([el, el.style.visibility]);
+                el.style.visibility = "hidden";
+              }
+            });
+          }
+          window.scrollTo(0, y);
+        },
+        args: [Math.max(0, targetY), i > 0]
+      });
+      await sleep(650); // render + captureVisibleTab rate limit
+      const dataUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
+        format: "png"
+      });
+      shots.push({ y: Math.max(0, targetY), dataUrl: dataUrl });
+      if (slices === 1) break;
+    }
+  } finally {
+    // Restore hidden elements and scroll position, even if a slice failed
+    try {
+      await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: (y) => {
+          if (window.__rsHidden) {
+            window.__rsHidden.forEach(([el, vis]) => {
+              el.style.visibility = vis;
+            });
+            window.__rsHidden = null;
+          }
+          window.scrollTo(0, y);
+        },
+        args: [m.originalY]
+      });
+    } catch (e) {
+      // the tab is gone or can't be reached, nothing to restore
+    }
   }
-
-  // Restore hidden elements and scroll position
-  await chrome.scripting.executeScript({
-    target: { tabId: tab.id },
-    func: (y) => {
-      if (window.__rsHidden) {
-        window.__rsHidden.forEach(([el, vis]) => {
-          el.style.visibility = vis;
-        });
-        window.__rsHidden = null;
-      }
-      window.scrollTo(0, y);
-    },
-    args: [m.originalY]
-  });
 
   if (shots.length === 1) {
     return { url: shots[0].dataUrl, ext: "png" };
