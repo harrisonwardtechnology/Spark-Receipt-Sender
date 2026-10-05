@@ -1,6 +1,6 @@
 {
   "name": "receipt-sender",
-  "version": "4.1.0",
+  "version": "4.1.1",
   "private": true,
   "description": "Script holder for the test command. The extension itself needs no npm packages and no build step.",
   "license": "SEE LICENSE IN LICENSE",

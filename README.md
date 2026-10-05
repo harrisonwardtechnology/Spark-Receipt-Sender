@@ -1,6 +1,6 @@
 # Receipt Sender
 
-![Version](https://img.shields.io/badge/version-4.1.0-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038) [![Tests](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml/badge.svg)](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml)
+![Version](https://img.shields.io/badge/version-4.1.1-0d9488) ![Platform](https://img.shields.io/badge/Chrome-Manifest%20V3-4285F4) ![Status](https://img.shields.io/badge/status-working-188038) [![Tests](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml/badge.svg)](https://github.com/HarrisonWard/Spark-Receipt-Sender/actions/workflows/test.yml)
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/hero-dark.png">
@@ -98,7 +98,7 @@ Neither service has a public upload API, so the extension works each web app the
 - **SparkReceipt:** a script on app.sparkreceipt.com opens Add documents, picks the document type, hands the file to their upload field, and clicks Confirm.
 - **Expensify:** a script on new.expensify.com clicks Scan receipt, drops your file onto their upload zone, and clicks Create expense.
 
-Both flows were last verified against the live apps in August 2026. Version 4.1.0 didn't change how either flow works, and it wasn't checked against the live apps again. If either service redesigns its upload screens, the drop may miss until the extension is updated. The backup file in Downloads/Receipts always works in the meantime.
+Both flows were last verified against the live apps in August 2026. Version 4.1.1 kept the same buttons, clicks and timings but changed a few details around them (listed in the changelog), and it wasn't checked against the live apps again. If either service redesigns its upload screens, the drop may miss until the extension is updated. The backup file in Downloads/Receipts always works in the meantime.
 
 ## Permissions, in Plain English
 
@@ -143,14 +143,14 @@ Three optional helpers in `tools/` need Python Playwright with Chromium:
 
 ## What's New
 
-See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is 4.1.0: a refreshed look with dark mode, the Activity Log, and automated tests.
+See [CHANGELOG.md](CHANGELOG.md) for what changed in each version. The latest is 4.1.1: bug fixes for Recent Grabs, the upload queue, timeouts, and a few smaller things.
 
 ## Notes
 
 - SparkReceipt grabs land as the document type you picked in the popup (Expense or Receipt by default). Expensify grabs land as scanned expenses.
 - Expensify rejects files under 240 bytes, which never matters for real receipts.
 - Gmail and mail app drafts address themselves to the right place for each service: your SparkReceipt forwarding address, or receipts@expensify.com (send from your Expensify sign-in email).
-- Very long pages are captured up to 12 screens tall. When a page is cut short, the Activity Log says so, the note on the SparkReceipt or Expensify page mentions it, and with the other After Grabbing choices the toolbar badge shows CUT instead of OK.
+- Very long pages are captured up to 12 screens tall. When a page is cut short, the Activity Log says so, the note on the SparkReceipt or Expensify page mentions it, and with the other After Grabbing the Page choices the toolbar badge shows CUT instead of OK.
 - Chrome's own pages and the Chrome Web Store can't be captured.
 - Because it's loaded unpacked, Chrome may occasionally remind you about developer mode extensions. You can dismiss that.
 
