@@ -40,12 +40,6 @@ from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ONLY = sys.argv[1:]
 
-# Until the receiptConsumed / dropFinished timing issue is fixed, a grab with
-# both cleanup extras off can stay on "Working" in Recent Grabs even though the
-# upload went through. Reported as a note, not a failure. Set to False once
-# that's fixed.
-ALLOW_STUCK_STATUS = True
-
 SPARK_HTML = """<!doctype html><html><head><title>SparkReceipt stand-in</title></head><body>
 <button class="sidebar-add-document-cta">Add documents</button>
 <div id="root"></div>
@@ -246,10 +240,10 @@ def run_scenario(p, name, sc, port):
             expect(len(downloads) == 1 and downloads[0]["state"] == "complete" and downloads[0]["exists"],
                    "the backup file is kept")
             expect(steps == AUTO_STEPS, "log steps were %s" % steps)
-            if status == "working" and ALLOW_STUCK_STATUS:
-                notes.append("upload went through, but Recent Grabs still says Working (known timing issue)")
-            else:
-                expect(status == "ok", "status is %s, expected ok" % status)
+            # With both cleanup extras off, the page reports back right after
+            # it hands the receipt over. Recent Grabs must still say OK.
+            expect(status == "ok", "status is %s, expected ok" % status)
+            expect("inFlight" not in store, "nothing is left in flight")
         kept = json.dumps({k: v for k, v in store.items() if k not in ("queue", "inFlight")})
         for secret in ("SECRETTOKEN", "orders/114", "Private Order Title"):
             expect(secret not in kept, "found %r in extension storage" % secret)

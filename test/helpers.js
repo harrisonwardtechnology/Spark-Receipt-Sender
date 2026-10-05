@@ -41,12 +41,16 @@ function event() {
   };
 }
 
-function storageArea(name, start, calls, onChanged, failKeys) {
+// Real storage takes a moment. `slow` makes every call wait a turn of the
+// event loop, which is what lets timing problems show up in tests.
+function storageArea(name, start, calls, onChanged, failKeys, slow) {
   const data = clone(start || {});
+  const pause = () => (slow ? new Promise((r) => setImmediate(r)) : null);
   return {
     data,
     async get(query) {
       calls.push(["storage." + name + ".get", clone(query)]);
+      await pause();
       if (query === null || query === undefined) return clone(data);
       const out = {};
       if (typeof query === "string") {
@@ -64,6 +68,7 @@ function storageArea(name, start, calls, onChanged, failKeys) {
     },
     async set(items) {
       calls.push(["storage." + name + ".set", clone(items)]);
+      await pause();
       if (failKeys && Object.keys(items).some((k) => failKeys.includes(k))) {
         throw new Error("storage is full");
       }
@@ -76,6 +81,7 @@ function storageArea(name, start, calls, onChanged, failKeys) {
     },
     async remove(key) {
       calls.push(["storage." + name + ".remove", key]);
+      await pause();
       delete data[key];
     }
   };
@@ -105,7 +111,7 @@ function fakeChrome(opts) {
     storage: {
       onChanged,
       sync: storageArea("sync", o.sync, calls, onChanged),
-      local: storageArea("local", o.local, calls, onChanged, o.failLocalKeys)
+      local: storageArea("local", o.local, calls, onChanged, o.failLocalKeys, o.slowStorage)
     },
     contextMenus: {
       onClicked: event(),

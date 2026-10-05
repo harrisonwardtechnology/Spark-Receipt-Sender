@@ -133,22 +133,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return false;
   }
 
+  // The three upload messages run one after another, in the order they
+  // arrive, so a quick "finished" can't overtake the "consumed" before it.
   if (msg.type === "getPendingReceipt") {
-    getQueueHead()
+    withQueue(() => getQueueHead())
       .then((head) => sendResponse(head))
       .catch(() => sendResponse(null));
     return true;
   }
 
   if (msg.type === "receiptConsumed") {
-    consumeHead()
+    withQueue(() => consumeHead())
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
   }
 
   if (msg.type === "dropFinished") {
-    handleDropFinished(msg, sender)
+    withQueue(() => handleDropFinished(msg, sender))
       .then(() => sendResponse({ ok: true }))
       .catch(() => sendResponse({ ok: false }));
     return true;
@@ -215,6 +217,17 @@ function noteServiceStep(msg, sender) {
 }
 
 // ---------- queue ----------
+
+// Every change to the queue and the in-flight receipt goes through this
+// chain, one at a time. Without it, two messages that arrive back to back can
+// read and write storage in between each other.
+let queueLock = Promise.resolve();
+
+function withQueue(fn) {
+  const next = queueLock.then(() => fn());
+  queueLock = next.catch(() => {});
+  return next;
+}
 
 async function getQueue() {
   const { queue } = await chrome.storage.local.get("queue");
@@ -464,7 +477,9 @@ async function deliver(tab, settings, capture, entryId, batchMode) {
   }
 
   if (settings.destination === "autodrop") {
-    await enqueueCapture(capture, filename, settings, downloadId, entryId);
+    await withQueue(() =>
+      enqueueCapture(capture, filename, settings, downloadId, entryId)
+    );
     logEvent("receipt_queued", { grabId: entryId, service: settings.service });
     if (!batchMode) {
       await openServiceTab(settings);

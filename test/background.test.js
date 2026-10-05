@@ -316,6 +316,26 @@ test("a confirmed upload marks the grab OK and clears the in-flight copy", async
   assert.deepEqual(steps(bg), ["grab_started", "file_saved", "receipt_queued", "service_opened", "upload_confirmed"]);
 });
 
+test("a finished message right behind the consumed message still records the upload", async () => {
+  // The service page sends both back to back. They must not cross.
+  for (const success of [true, false]) {
+    const bg = loadBackground({ slowStorage: true });
+    await bg.sandbox.run(TAB);
+    await bg.settle();
+    await Promise.all([
+      bg.send({ type: "receiptConsumed" }, SPARK_SENDER),
+      bg.send({ type: "dropFinished", success }, SPARK_SENDER)
+    ]);
+    await bg.settle();
+    assert.equal(bg.chrome.storage.local.data.history[0].status, success ? "ok" : "fail");
+    assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+    assert.equal(bg.chrome.storage.local.data.queue.length, 0);
+    assert.equal(steps(bg).pop(), success ? "upload_confirmed" : "upload_missed");
+    const missed = bg.chrome.storage.local.data.activityLog.filter((e) => /^upload_/.test(e.step));
+    assert.equal(missed[0].grabId, bg.chrome.storage.local.data.history[0].id);
+  }
+});
+
 test("cleanup extras run only after a confirmed upload", async () => {
   const on = await finishedGrab({ closeTab: true, deleteLocal: true }, true);
   assert.deepEqual(callsTo(on.bg.calls, "downloads.removeFile")[0].slice(1), [1]);

@@ -51,7 +51,8 @@ function el(text, extra) {
 // Run a content script against a stand-in page. `page` maps a selector to the
 // list of elements it should find right now; tests change it as "the app"
 // reacts to clicks.
-async function start(file, payload, page, pathname) {
+async function start(file, payload, page, pathname, opts) {
+  const o = opts || {};
   const clock = { t: 1000000 };
   const messages = [];
   const intervals = [];
@@ -88,6 +89,10 @@ async function start(file, payload, page, pathname) {
       runtime: {
         sendMessage(msg) {
           messages.push(clone(msg));
+          if (o.reply) {
+            const custom = o.reply(msg);
+            if (custom) return custom;
+          }
           return Promise.resolve(msg.type === "getPendingReceipt" ? clone(payload) : { ok: true });
         }
       }
@@ -132,10 +137,12 @@ async function start(file, payload, page, pathname) {
     intervals,
     location: sandbox.location,
     banner: () => (byId["spark-sender-banner-text"] || {}).textContent,
-    // Move the clock, then run every live timer once.
-    tick(ms) {
+    // Move the clock, run every live timer once, then let any replies from
+    // the extension land.
+    async tick(ms) {
       clock.t += ms === undefined ? 400 : ms;
       intervals.filter((i) => i.live).forEach((i) => i.fn());
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
     },
     // Messages that drive the upload, without the Activity Log notes.
     flow: () => messages.filter((m) => m.type !== "logStep").map((m) => (m.type === "dropFinished" ? "dropFinished:" + m.success : m.type)),
@@ -173,26 +180,26 @@ test("SparkReceipt: Add documents, pick the type, attach, Confirm", async () => 
   assert.equal(run.intervals[0].ms, 400);
   assert.equal(run.banner(), "Dropping your receipt into SparkReceipt...");
 
-  run.tick();
+  await run.tick();
   assert.equal(app.add.clicks, 1);
-  run.tick();
+  await run.tick();
   assert.deepEqual(app.types.map((t) => t.clicks), [1, 0, 0, 0]);
-  run.tick();
+  await run.tick();
   assert.equal(app.input.files.length, 1);
   assert.equal(app.input.files[0].name, "3f6c1c1e.jpg");
   assert.equal(app.input.files[0].type, "image/jpeg");
   assert.equal(app.input.files[0].size, 16);
   assert.deepEqual(app.input.events, ["input", "change"]);
 
-  run.tick(); // too soon after attaching: wait
+  await run.tick(); // too soon after attaching: wait
   assert.equal(app.confirm.clicks, 0);
-  run.tick(600);
+  await run.tick(600);
   assert.equal(app.confirm.clicks, 1);
   assert.equal(run.intervals[0].live, false);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"]);
   assert.equal(run.banner(), "Receipt dropped in. SparkReceipt is scanning it now.");
 
-  run.tick(5000);
+  await run.tick(5000);
   assert.equal(app.add.clicks, 1);
   assert.equal(app.confirm.clicks, 1);
 });
@@ -201,8 +208,8 @@ test("SparkReceipt: the chosen document type is the one clicked", async () => {
   for (const [sparkType, index] of [["income", 1], ["statement", 2], ["other", 3], ["made-up", 0]]) {
     const app = sparkPage();
     const run = await start("sparkdrop.js", { ...PAYLOAD, sparkType }, app.page);
-    run.tick();
-    run.tick();
+    await run.tick();
+    await run.tick();
     assert.equal(app.types[index].clicks, 1, sparkType);
   }
 });
@@ -210,21 +217,21 @@ test("SparkReceipt: the chosen document type is the one clicked", async () => {
 test("SparkReceipt: cleanup waits for the upload window to close", async () => {
   const app = sparkPage();
   const run = await start("sparkdrop.js", { ...PAYLOAD, closeTab: true }, app.page);
-  run.tick();
-  run.tick();
-  run.tick();
-  run.tick(1000);
+  await run.tick();
+  await run.tick();
+  await run.tick();
+  await run.tick(1000);
   assert.equal(app.confirm.clicks, 1);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed"]);
   assert.equal(run.intervals[1].ms, 500);
 
-  run.tick(10000); // window still open: keep waiting
+  await run.tick(10000); // window still open: keep waiting
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed"]);
   delete app.page[".add-document-modal-body"];
-  run.tick(500);
-  run.tick(5000); // closed, but not for 6 seconds yet
+  await run.tick(500);
+  await run.tick(5000); // closed, but not for 6 seconds yet
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed"]);
-  run.tick(1500);
+  await run.tick(1500);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"]);
   assert.equal(run.banner(), "Upload done. Closing this tab...");
 });
@@ -232,21 +239,21 @@ test("SparkReceipt: cleanup waits for the upload window to close", async () => {
 test("SparkReceipt: waits at the sign-in screen, then gives up politely", async () => {
   const page = { 'input[type="password"]': [el("")] };
   const run = await start("sparkdrop.js", PAYLOAD, page);
-  run.tick();
-  run.tick(100000);
+  await run.tick();
+  await run.tick(100000);
   assert.equal(run.banner(), "Sign in and I'll drop the receipt in...");
   assert.deepEqual(run.flow(), ["getPendingReceipt"]);
   assert.equal(run.notes().filter((n) => n.step === "sign_in_needed").length, 1);
-  run.tick(80000);
+  await run.tick(80000);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
   assert.equal(run.banner(), "Sign in first. Your receipt is saved in Downloads/Receipts.");
 });
 
 test("SparkReceipt: gives up after a minute if the page never matches", async () => {
   const run = await start("sparkdrop.js", PAYLOAD, {});
-  run.tick(59000);
+  await run.tick(59000);
   assert.deepEqual(run.flow(), ["getPendingReceipt"]);
-  run.tick(1500);
+  await run.tick(1500);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
   assert.equal(run.banner(), "Couldn't finish the drop. Drag the file in from Downloads/Receipts instead.");
 });
@@ -254,12 +261,12 @@ test("SparkReceipt: gives up after a minute if the page never matches", async ()
 test("SparkReceipt: no Confirm button means a miss, with the file left attached", async () => {
   const app = sparkPage({ noConfirm: true });
   const run = await start("sparkdrop.js", PAYLOAD, app.page);
-  run.tick();
-  run.tick();
-  run.tick();
-  run.tick(14000);
+  await run.tick();
+  await run.tick();
+  await run.tick();
+  await run.tick(14000);
   assert.deepEqual(run.flow(), ["getPendingReceipt"]);
-  run.tick(1500);
+  await run.tick(1500);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
 });
 
@@ -323,16 +330,16 @@ test("Expensify: Scan receipt, drop the file on the upload zone, Create expense"
   assert.equal(run.intervals[0].ms, 400);
   assert.equal(run.banner(), "Dropping your receipt into Expensify...");
 
-  run.tick();
+  await run.tick();
   assert.equal(app.scan.clicks, 1);
-  run.tick();
+  await run.tick();
   assert.deepEqual(app.zone.events, ["dragenter", "dragover", "drop"]);
   assert.equal(app.zone.dropped.name, "3f6c1c1e.jpg");
   assert.equal(app.zone.dropped.type, "image/jpeg");
 
-  run.tick(); // too soon after dropping: wait
+  await run.tick(); // too soon after dropping: wait
   assert.equal(app.create.clicks, 0);
-  run.tick(1000);
+  await run.tick(1000);
   assert.equal(app.create.clicks, 1);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"]);
   assert.equal(run.banner(), "Receipt dropped in. Expensify is scanning it now.");
@@ -341,26 +348,26 @@ test("Expensify: Scan receipt, drop the file on the upload zone, Create expense"
 test("Expensify: falls back to the + menu when there is no Scan button", async () => {
   const app = expensifyPage({ fabOnly: true });
   const run = await start("expensifydrop.js", EXP, app.page);
-  run.tick();
+  await run.tick();
   assert.equal(app.fab.clicks, 1);
-  run.tick();
+  await run.tick();
   assert.equal(app.menuItem.clicks, 1);
-  run.tick();
+  await run.tick();
   assert.deepEqual(app.zone.events, ["dragenter", "dragover", "drop"]);
 });
 
 test("Expensify: cleanup waits until the app leaves the create screen", async () => {
   const app = expensifyPage();
   const run = await start("expensifydrop.js", { ...EXP, deleteLocal: true }, app.page, "/create/scan");
-  run.tick();
-  run.tick();
-  run.tick(1300);
+  await run.tick();
+  await run.tick();
+  await run.tick(1300);
   assert.equal(app.create.clicks, 1);
-  run.tick(10000);
+  await run.tick(10000);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed"]);
   run.location.pathname = "/home";
-  run.tick(500);
-  run.tick(6100);
+  await run.tick(500);
+  await run.tick(6100);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"]);
   assert.equal(run.banner(), "Upload done. Cleaning up the backup file...");
 });
@@ -368,17 +375,17 @@ test("Expensify: cleanup waits until the app leaves the create screen", async ()
 test("Expensify: waits at the sign-in screen", async () => {
   const page = { 'input[aria-label*="Phone or email" i], input[placeholder*="Phone or email" i]': [el("")] };
   const run = await start("expensifydrop.js", EXP, page);
-  run.tick(1000);
+  await run.tick(1000);
   assert.equal(run.banner(), "Sign in and I'll drop the receipt in...");
-  run.tick(180000);
+  await run.tick(180000);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
 });
 
 test("Expensify: gives up after 75 seconds if the page never matches", async () => {
   const run = await start("expensifydrop.js", EXP, {});
-  run.tick(74000);
+  await run.tick(74000);
   assert.deepEqual(run.flow(), ["getPendingReceipt"]);
-  run.tick(1500);
+  await run.tick(1500);
   assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:false"]);
 });
 
@@ -387,15 +394,36 @@ test("Expensify: ignores a receipt meant for SparkReceipt", async () => {
   assert.equal(run.intervals.length, 0);
 });
 
+// ---------- reporting back ----------
+
+test("the result is only sent once the extension has taken the receipt", async () => {
+  for (const [file, app, payload] of [
+    ["sparkdrop.js", sparkPage(), PAYLOAD],
+    ["expensifydrop.js", expensifyPage(), EXP]
+  ]) {
+    let release;
+    const held = new Promise((r) => (release = r));
+    const run = await start(file, payload, app.page, "/create/scan", {
+      reply: (msg) => (msg.type === "receiptConsumed" ? held : null)
+    });
+    for (let i = 0; i < 4; i++) await run.tick(1300);
+    assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed"], file);
+    release({ ok: true });
+    await run.tick(0);
+    assert.deepEqual(run.flow(), ["getPendingReceipt", "receiptConsumed", "dropFinished:true"], file);
+    assert.equal(run.messages[run.messages.length - 1].step, "service_note", file);
+  }
+});
+
 // ---------- Activity Log notes ----------
 
 test("log notes ride along but never change the upload messages", async () => {
   const app = sparkPage();
   const run = await start("sparkdrop.js", PAYLOAD, app.page);
-  run.tick();
-  run.tick();
-  run.tick();
-  run.tick(1000);
+  await run.tick();
+  await run.tick();
+  await run.tick();
+  await run.tick(1000);
   assert.deepEqual(run.notes().map((n) => n.step), ["receipt_picked_up", "file_attached", "service_note"]);
   for (const note of run.notes()) {
     assert.equal(note.grabId, PAYLOAD.id);

@@ -191,20 +191,31 @@
     return null;
   }
 
+  // Resolves once the extension has taken the receipt off its queue. The
+  // result is only reported after that, so the two messages can't cross.
+  let consumed = Promise.resolve();
+
   function finish(message, success) {
     clearInterval(timer);
-    try {
-      chrome.runtime.sendMessage({ type: "receiptConsumed" }).catch(() => {});
-    } catch (e) {
-      // extension context gone, nothing to do
-    }
+    consumed = tell({ type: "receiptConsumed" });
     showBanner(message, true);
     if (success && (payload.closeTab || payload.deleteLocal)) {
       settleThenTidy();
     } else {
       sendFinished(!!success);
     }
-    logStep("service_note", message);
+    consumed.then(() => logStep("service_note", message));
+  }
+
+  // Send a message to the extension. Resolves when it replies, or right away
+  // if it can't be reached. Never throws.
+  function tell(msg) {
+    try {
+      return chrome.runtime.sendMessage(msg).catch(() => {});
+    } catch (e) {
+      // extension context gone, nothing to do
+      return Promise.resolve();
+    }
   }
 
   // Activity Log only: tell the extension about a step. Never waits, never
@@ -225,13 +236,7 @@
   }
 
   function sendFinished(ok) {
-    try {
-      chrome.runtime
-        .sendMessage({ type: "dropFinished", success: ok })
-        .catch(() => {});
-    } catch (e) {
-      // extension context gone, nothing to do
-    }
+    consumed.then(() => tell({ type: "dropFinished", success: ok }));
   }
 
   // Wait for the create flow to wrap up, then let the extension tidy up.
