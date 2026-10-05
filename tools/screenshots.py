@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Regenerate the README screenshots in docs/screenshots.
+"""Regenerate the README screenshots in docs/screenshots and the store images in store/.
 
 Run from anywhere:
 
-    python3 tools/screenshots.py
+    python3 tools/screenshots.py            # docs/screenshots and store/
+    python3 tools/screenshots.py --docs     # docs/screenshots only
+    python3 tools/screenshots.py --store    # store/ only (uses the docs popup and settings shots)
 
 Needs Python Playwright with Chromium. Nothing is installed or downloaded by
 this script. The pages are opened as plain files with a stand-in for the
@@ -275,27 +277,202 @@ def shoot_hero(browser, scheme, out_name):
         context.close()
 
 
+# ---------- Chrome Web Store assets (store/) ----------
+#
+# The store wants screenshots at exactly 1280x800 and a 440x280 small promo
+# tile, as PNG without see-through parts, plus a 128x128 icon. They're drawn
+# at 1x so the sizes come out exact. Light mode only.
+
+STORE = ROOT / "store"
+STORE_SHOTS = STORE / "screenshots"
+
+STORE_FRAME = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Receipt Sender</title>
+<style>
+  * {{ box-sizing: border-box; }}
+  html, body {{ margin: 0; width: 1280px; height: 800px; }}
+  body {{
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    color: #0c2b28;
+    background: radial-gradient(1200px 760px at 12% 0%, #f4fbfa, #d9efeb);
+    overflow: hidden; position: relative;
+  }}
+  .copy {{ position: absolute; left: 72px; top: {copy_top}px; width: {copy_w}px; }}
+  .brand {{ display: flex; align-items: center; gap: 14px; font-size: 24px; font-weight: 700; letter-spacing: -0.02em; }}
+  .brand img {{ width: 48px; height: 48px; border-radius: 11px; }}
+  h1 {{ margin: 28px 0 0; font-size: 44px; line-height: 1.1; letter-spacing: -0.03em; font-weight: 750; }}
+  p {{ margin: 18px 0 0; font-size: 20px; line-height: 1.45; color: #2f4a46; }}
+  .shot {{ position: absolute; border-radius: 12px; overflow: hidden; outline: 1px solid rgba(12, 43, 40, 0.10);
+           box-shadow: 0 30px 70px rgba(4, 33, 30, 0.28), 0 4px 14px rgba(4, 33, 30, 0.14); background: #e6eeec; }}
+  .shot img {{ display: block; width: 100%; }}
+  .bar {{ height: 26px; display: flex; align-items: center; gap: 6px; padding: 0 12px; }}
+  .bar i {{ width: 8px; height: 8px; border-radius: 50%; background: #b9c9c5; }}
+</style></head>
+<body>
+  <div class="copy">
+    <div class="brand"><img src="{icon}" alt="">Receipt Sender</div>
+    <h1>{title}</h1>
+    <p>{line}</p>
+  </div>
+  {shots}
+</body></html>
+"""
+
+PROMO_TILE = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Receipt Sender</title>
+<style>
+  html, body { margin: 0; width: 440px; height: 280px; }
+  body {
+    font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background: linear-gradient(135deg, #0f766e, #0b4f4a); color: #ffffff; overflow: hidden;
+    display: flex; flex-direction: column; justify-content: center; padding: 0 36px; box-sizing: border-box;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; font-size: 30px; font-weight: 750; letter-spacing: -0.02em; }
+  .brand img { width: 64px; height: 64px; border-radius: 14px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.25); }
+  p { margin: 18px 0 0; font-size: 19px; line-height: 1.35; color: #d7f2ee; }
+</style></head>
+<body>
+  <div class="brand"><img src="ICON" alt="">Receipt Sender</div>
+  <p>Any page or image to SparkReceipt or Expensify, in one click.</p>
+</body></html>
+"""
+
+ICON_PADDED = """<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Icon</title>
+<style>html, body { margin: 0; width: 128px; height: 128px; background: transparent; }
+img { position: absolute; left: 16px; top: 16px; width: 96px; height: 96px; }</style></head>
+<body><img src="ICON" alt=""></body></html>
+"""
+
+
+def render_html(browser, html, width, height, out, transparent=False):
+    with tempfile.TemporaryDirectory() as tmp:
+        wrapper = pathlib.Path(tmp) / "frame.html"
+        wrapper.write_text(html)
+        context = browser.new_context(viewport={"width": width, "height": height},
+                                      device_scale_factor=1, color_scheme="light")
+        page = context.new_page()
+        page.on("pageerror", lambda e: problems.append("%s page error: %s" % (out.name, e)))
+        page.on("requestfailed", lambda r: problems.append("%s failed to load %s" % (out.name, r.url)))
+        page.goto(wrapper.as_uri())
+        page.wait_for_timeout(300)
+        page.screenshot(path=str(out), omit_background=transparent)
+        context.close()
+
+
+def store_frame(title, line, shots, copy_top=230, copy_w=420):
+    return STORE_FRAME.format(icon=(ROOT / "icons" / "icon128.png").as_uri(), title=title, line=line,
+                              shots=shots, copy_top=copy_top, copy_w=copy_w)
+
+
+def shoot_store(browser):
+    STORE_SHOTS.mkdir(parents=True, exist_ok=True)
+    popup = (OUT / "popup-light.png").as_uri()
+    options = (OUT / "options-light.png").as_uri()
+
+    # 1. The popup over the settings page
+    shots = ('<div class="shot" style="left:530px;top:110px;width:680px">'
+             '<div class="bar"><i></i><i></i><i></i></div><img src="%s" alt=""></div>'
+             '<div class="shot" style="left:950px;top:210px;width:280px;background:none"><img src="%s" alt=""></div>'
+             % (options, popup))
+    render_html(browser, store_frame("Any Page to a Filed Receipt, in One Click",
+                                     "Grabs the page, opens SparkReceipt or Expensify, and uploads it for you.",
+                                     shots, copy_top=230, copy_w=445),
+                1280, 800, STORE_SHOTS / "1-popup-over-settings.png")
+
+    # 2. The popup on its own, large enough to read
+    shots = ('<div class="shot" style="left:690px;top:60px;width:370px;background:none">'
+             '<img src="%s" alt=""></div>' % popup)
+    render_html(browser, store_frame("Pick a Service, Then Grab the Page",
+                                     "Switch between SparkReceipt and Expensify for each grab. Your last 10 grabs "
+                                     "show right in the popup, marked uploaded, saved, or missed.",
+                                     shots, copy_top=250, copy_w=480),
+                1280, 800, STORE_SHOTS / "2-popup.png")
+
+    # 3. The settings page with the Activity Log, as it really looks
+    context, page = open_page_1x(browser, "options.html", stub_config())
+    page.screenshot(path=str(STORE_SHOTS / "3-settings-and-activity-log.png"))
+    context.close()
+
+    # 4. The privacy policy
+    context, page = open_page_1x(browser, "privacy.html", None)
+    page.screenshot(path=str(STORE_SHOTS / "4-privacy.png"))
+    context.close()
+
+    icon = (ROOT / "icons" / "icon128.png").as_uri()
+    render_html(browser, PROMO_TILE.replace("ICON", icon), 440, 280, STORE / "promo-small-440x280.png")
+    # 96x96 artwork with 16px of clear space around it, as the store suggests
+    render_html(browser, ICON_PADDED.replace("ICON", icon), 128, 128, STORE / "icon-128.png", transparent=True)
+
+
+def open_page_1x(browser, name, config):
+    """A page at exactly 1280x800 for the store."""
+    context = browser.new_context(viewport={"width": 1280, "height": 800}, device_scale_factor=1,
+                                  color_scheme="light", locale=LOCALE, timezone_id=TIMEZONE)
+    page = context.new_page()
+    page.on("console", lambda m: problems.append("store %s console %s: %s" % (name, m.type, m.text))
+            if m.type in ("error", "warning") else None)
+    page.on("pageerror", lambda e: problems.append("store %s page error: %s" % (name, e)))
+    if config is not None:
+        page.add_init_script("window.__RS_STUB = %s;" % json.dumps(config))
+        page.add_init_script(path=str(STUB))
+    page.goto((ROOT / name).as_uri())
+    page.wait_for_timeout(250)
+    return context, page
+
+
+def png_info(path):
+    """Width, height and PNG color type (2 is RGB, 6 has see-through parts)."""
+    head = path.read_bytes()[:26]
+    return int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big"), head[25]
+
+
+def check_store():
+    want = {path: (1280, 800) for path in STORE_SHOTS.glob("*.png")}
+    want[STORE / "promo-small-440x280.png"] = (440, 280)
+    if len(want) != 5:
+        problems.append("expected 4 store screenshots and a promo tile, found %d files" % len(want))
+    for path, size in want.items():
+        w, h, color = png_info(path)
+        if (w, h) != size:
+            problems.append("%s is %dx%d, the store needs %dx%d" % (path.name, w, h, size[0], size[1]))
+        if color != 2:
+            problems.append("%s has see-through parts, the store wants plain RGB" % path.name)
+    if png_info(STORE / "icon-128.png")[:2] != (128, 128):
+        problems.append("store/icon-128.png isn't 128x128")
+
+
 def main():
+    only = sys.argv[1:]
+    if only and only not in (["--docs"], ["--store"]):
+        print("Use --docs for docs/screenshots only, --store for store/ only, or nothing for both.")
+        return 2
+    docs, store = only != ["--store"], only != ["--docs"]
     OUT.mkdir(parents=True, exist_ok=True)
     with sync_playwright() as p:
         browser = p.chromium.launch()
-        for scheme in ("light", "dark"):
+        for scheme in (("light", "dark") if docs else ()):
             shoot_popup(browser, scheme, "popup-%s.png" % scheme)
             shoot_options(browser, scheme, "options-%s.png" % scheme)
             shoot_log(browser, scheme, "activity-log-%s.png" % scheme)
             shoot_privacy(browser, scheme, "privacy-%s.png" % scheme)
             shoot_hero(browser, scheme, "hero-%s.png" % scheme)
-        shoot_popup(browser, "light", "popup-empty-light.png", empty=True)
-        shoot_options(browser, "light", "options-empty-light.png", empty=True)
-        shoot_options_phone(browser, "light", "options-narrow-light.png")
+        if docs:
+            shoot_popup(browser, "light", "popup-empty-light.png", empty=True)
+            shoot_options(browser, "light", "options-empty-light.png", empty=True)
+            shoot_options_phone(browser, "light", "options-narrow-light.png")
+        if store:
+            shoot_store(browser)  # built from the docs popup and settings shots
         browser.close()
+    if store:
+        check_store()
 
     if problems:
         print("Problems found while rendering:")
         for line in problems:
             print("  " + line)
         return 1
-    for path in sorted(OUT.glob("*.png")):
+    for path in sorted(OUT.glob("*.png")) + sorted(STORE.rglob("*.png")):
         print("%7.0f KB  %s" % (path.stat().st_size / 1024, path.relative_to(ROOT)))
     return 0
 
