@@ -462,6 +462,17 @@ def stand_in_untouched(run, page, site, expected):
                  "The stand-in page saw %s, expected only %s." % (events, expected))
 
 
+def extension_worker(ctx):
+    """The extension's service worker, once Chrome's extension APIs are ready in it."""
+    def ready():
+        for sw in ctx.service_workers:
+            if sw.url.startswith("chrome-extension://") and sw.evaluate(
+                    "() => typeof chrome === 'object' && !!(chrome.runtime && chrome.storage)"):
+                return sw
+        return None
+    return wait_for(ready, 30)
+
+
 def stage_extension(folder):
     """Copy just the runtime files (the same ones the store zip gets)."""
     if folder.exists():
@@ -522,7 +533,11 @@ def main():
                 print("If the profile folder is open in another window, close it first.")
                 return 2
             try:
-                sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=30000)
+                sw = extension_worker(ctx)
+                if not sw:
+                    run.step("setup", "Load the Extension", FAIL, "The extension didn't start in Chromium.")
+                    run.write()
+                    return 1
                 run.version = sw.evaluate("() => chrome.runtime.getManifest().version")
                 waiting = sw.evaluate("async () => { const s = await chrome.storage.local.get(['queue', 'inFlight']);"
                                       " return (s.queue || []).length + [].concat(s.inFlight || []).length; }")
