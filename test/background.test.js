@@ -454,6 +454,24 @@ test("an interrupted download fails the grab", async () => {
   assert.equal(bg.chrome.storage.local.data.queue, undefined);
 });
 
+test("a download that finishes before anyone is listening is still noticed", async () => {
+  // Failed before the listener was in place: the grab must fail, not carry on
+  let bg = loadBackground({ downloadEarly: true, downloadFails: true });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "fail");
+  assert.equal(bg.chrome.storage.local.data.queue, undefined);
+  assert.deepEqual(steps(bg), ["grab_started", "grab_failed"]);
+  assert.equal(bg.chrome.downloads.onChanged.listeners.length, 0);
+
+  // Finished before the listener was in place: no waiting, carry on
+  bg = loadBackground({ downloadEarly: true });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+  assert.equal(bg.chrome.downloads.onChanged.listeners.length, 0);
+});
+
 test("nothing private reaches extension storage besides the queued image", async () => {
   const bg = loadBackground({ sync: { destination: "none" } });
   await bg.sandbox.run(TAB);

@@ -1059,25 +1059,39 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+// Resolves when the download is complete, rejects if it was interrupted.
+// Gives up waiting (and carries on) after 15 seconds.
 function waitForDownload(downloadId) {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
+    let done = false;
+    const finish = (err) => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
       chrome.downloads.onChanged.removeListener(listener);
-      resolve();
-    }, 15000);
+      if (err) reject(err);
+      else resolve();
+    };
+    const settle = (state) => {
+      if (state === "complete") finish();
+      else if (state === "interrupted") finish(new Error("Download failed"));
+    };
+    const timer = setTimeout(() => finish(), 15000);
     const listener = (delta) => {
       if (delta.id !== downloadId || !delta.state) return;
-      if (delta.state.current === "complete") {
-        clearTimeout(timer);
-        chrome.downloads.onChanged.removeListener(listener);
-        resolve();
-      } else if (delta.state.current === "interrupted") {
-        clearTimeout(timer);
-        chrome.downloads.onChanged.removeListener(listener);
-        reject(new Error("Download failed"));
-      }
+      settle(delta.state.current);
     };
     chrome.downloads.onChanged.addListener(listener);
+    // A small file can finish before the listener is in place, so check
+    // where it stands right now as well.
+    Promise.resolve()
+      .then(() => chrome.downloads.search({ id: downloadId }))
+      .then((items) => {
+        if (Array.isArray(items) && items[0]) settle(items[0].state);
+      })
+      .catch(() => {
+        // the listener and the timer still cover it
+      });
   });
 }
 

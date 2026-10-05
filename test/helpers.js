@@ -98,6 +98,7 @@ function fakeChrome(opts) {
   const onChanged = event();
   const downloadsChanged = event();
   let nextDownload = 1;
+  const downloadStates = {};
   let nextTab = 100;
   const chrome = {
     runtime: {
@@ -173,13 +174,19 @@ function fakeChrome(opts) {
       async download(options) {
         const id = nextDownload++;
         calls.push(["downloads.download", { ...clone(options), url: options.url.slice(0, 22) }]);
-        setImmediate(() =>
-          downloadsChanged.fire({
-            id,
-            state: { current: o.downloadFails ? "interrupted" : "complete" }
-          })
-        );
+        downloadStates[id] = "in_progress";
+        const end = () => {
+          downloadStates[id] = o.downloadFails ? "interrupted" : "complete";
+          downloadsChanged.fire({ id, state: { current: downloadStates[id] } });
+        };
+        // `downloadEarly`: the file is done before the caller even hears its id
+        if (o.downloadEarly) end();
+        else setImmediate(end);
         return id;
+      },
+      async search(query) {
+        calls.push(["downloads.search", clone(query)]);
+        return downloadStates[query.id] ? [{ id: query.id, state: downloadStates[query.id] }] : [];
       },
       removeFile: note("downloads.removeFile"),
       erase: note("downloads.erase"),
