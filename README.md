@@ -6,26 +6,101 @@ A Chrome extension that turns any web page or image into a receipt inside [Spark
 
 Built because SparkReceipt has no browser extension and Expensify killed theirs. This fills both gaps.
 
-## What it does
+## What It Does
 
-One click on a receipt page and the extension grabs the whole page as a stitched full page image, opens your receipt service, walks its own upload flow, and the scan starts. SparkReceipt: Add documents, Expense or receipt, attach, Confirm. Expensify: Scan receipt, drop on the upload zone, Create expense. A small note in the corner narrates each step. A backup copy of every grab lands in Downloads/Receipts.
+Receipt Sender is for anyone who keeps their receipts in SparkReceipt or Expensify and is tired of the download, drag, and drop routine. Online orders, invoices, and payment confirmations mostly live on web pages, not in your inbox, so getting them into your receipt app usually means saving a file, finding it, and uploading it by hand.
+
+This extension does all of that with one click. It takes a picture of the page you are on (the whole thing, top to bottom, not just what fits on screen), saves a backup copy to Downloads/Receipts, opens your receipt service, and clicks through the service's own upload screens for you. SparkReceipt: Add documents, pick the document type, attach, Confirm. Expensify: Scan receipt, drop the file on the upload zone, Create expense. A small note in the corner of the page tells you what it is doing at each step.
+
+If anything goes sideways (you are logged out, the site changed, a button never shows up), nothing is lost. The backup file stays in Downloads/Receipts and the tab stays open so you can finish by hand. The toolbar badge shows OK when it worked and ! when you should take a look.
 
 ## Features
 
-| Feature | How |
-|---|---|
-| Grab a whole page | Stitched full page image, via toolbar, right click, or Alt+Shift+S |
-| Grab just an image | Right click any image and send only that |
-| Grab all tabs | One click batches every tab in the window through the queue |
-| Two services | SparkReceipt and Expensify, switchable per grab in the popup |
-| Auto drop | Walks each service's real upload flow and confirms for you |
-| Silent mode | Runs in a background tab so you never leave your page |
-| Auto close the tab | Optional, waits for the upload to finish first |
-| Auto delete the backup file | Optional, only after a fully successful drop |
-| Recent grabs list | Last 10 grabs in the popup with pass or fail marks |
-| Type picker | SparkReceipt grabs can file as expense, invoice, statement, or other |
-| GUID file names | Every grab saves as a unique id, no name collisions |
-| Fallback safety net | Any miss leaves the tab open and the file in Downloads/Receipts |
+### Grabbing Receipts
+
+- Grab the whole page as one tall image, stitched together from screenshots as it scrolls down
+- Sticky headers and floating bars are hidden after the first screen so they do not repeat down the image
+- Your scroll position is put back where it was when the grab is done
+- Very long pages are capped at 12 screens tall
+- Quick mode: grab only what is on screen instead of the full page
+- If a full page grab fails for any reason, it falls back to a regular screenshot
+- Right click any image to send just that image
+- Image grabs try three ways in order: fetch it from inside the page (so logged in images work), fetch it directly if you granted all sites access, or crop it out of a screenshot
+- Grab every tab in the current window at once, one after another, with the badge counting along (1/5, 2/5, and so on)
+- Batch mode skips Chrome pages and your SparkReceipt and Expensify tabs
+
+### Ways To Start A Grab
+
+- Toolbar popup: **Grab this page** or **Grab all tabs in this window**
+- Right click a page: **Send page to SparkReceipt** (or Expensify)
+- Right click an image: **Send this image to SparkReceipt** (or Expensify)
+- The right click menu wording updates to match whichever service you picked
+- Keyboard shortcut: **Alt+Shift+S**
+
+### Two Receipt Services
+
+- SparkReceipt and Expensify, switchable per grab right in the popup or in Settings
+- SparkReceipt grabs can be filed as Expense or receipt, Income or invoice, Bank or credit card statement, or Other document
+- The type picker only shows up in the popup when SparkReceipt is selected
+- The popup spells out exactly what will happen before you click (for example, "Saves this page as a full page image then drops it into SparkReceipt for you.")
+
+### Automatic Drop
+
+- Clicks through each service's real upload screens, the same way you would
+- Reuses an already open SparkReceipt or Expensify tab instead of piling up new ones
+- Logged out? It waits up to 3 minutes for you to log in, then carries on
+- Gives up cleanly if a step never appears (about a minute for SparkReceipt, a bit longer for Expensify) and tells you to drag the file from Downloads/Receipts
+- If the file attaches but the last button cannot be found, the note tells you to finish that one click yourself
+- Grabs waiting in line are handled one after another through the same tab
+- Anything left waiting more than 10 minutes is dropped from the line so stale grabs do not show up later
+- A colored note in the corner of the service page narrates each step, and can be closed with the x
+
+### After The Upload
+
+- Silent mode: the drop runs in a background tab so you never leave the page you are on
+- Close the service tab automatically, but only after the upload has had time to finish
+- Delete the backup file automatically, but only after a fully successful drop
+- Toolbar badge: ... while working, OK in green when done, ! in red when something needs a look
+
+### Other Ways To Send
+
+- Open the service so you can drop the file in yourself
+- Open a Gmail draft already addressed to the right place, with a subject line and a reminder to attach the file
+- Open a draft in your regular mail app instead of Gmail
+- Just save the file and do nothing else
+- Email drafts go to your SparkReceipt forwarding address, or receipts@expensify.com for Expensify
+- Optional: pop open the Downloads folder after saving, handy for dragging by hand
+
+### Files And History
+
+- Every grab saves a backup copy to Downloads/Receipts
+- Each file gets a random unique name, so nothing ever overwrites anything
+- Page grabs save as JPG (PNG when the page fits on one screen). Image grabs keep their original type where possible (JPG, PNG, WebP, GIF, HEIC)
+- The popup lists your last 10 grabs with the site name, the service, and a mark for worked, failed, still working, or saved only
+
+### Settings And Setup
+
+- The Settings page opens by itself the first time you install
+- The automatic drop needs no setup at all. The forwarding email is only needed for the email options
+- Settings sync to your other computers through Chrome if you are signed in
+- Settings from older versions carry over automatically
+
+### Privacy And Permissions
+
+- Only two sites get access: app.sparkreceipt.com and new.expensify.com
+- All sites access is optional and only asked for when you first use Grab all tabs. Say no and everything else still works
+- No debugger permission, no remote code, no analytics, no servers
+- Zero dependencies and no build step. The files in this repo are exactly what runs
+
+## How It Works
+
+1. You click Grab (or right click, or press Alt+Shift+S)
+2. The extension captures the page or image and saves a backup to Downloads/Receipts
+3. The capture is put in a short line inside the extension, waiting for pickup
+4. Your receipt service opens (or an open tab is reused), in the background if silent mode is on
+5. A small script on the service page picks up the waiting receipt and clicks through the upload steps
+6. The page reports back: the badge flashes OK or !, and the grab is marked in your recent list
+7. If you turned them on, the tab closes and the backup file is deleted, only after a clean upload
 
 ## Install
 
