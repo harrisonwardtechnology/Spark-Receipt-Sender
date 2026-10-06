@@ -7,7 +7,10 @@
 (async function () {
   let payload = null;
   try {
-    payload = await chrome.runtime.sendMessage({ type: "getPendingReceipt" });
+    payload = await chrome.runtime.sendMessage({
+      type: "getPendingReceipt",
+      service: "sparkreceipt"
+    });
   } catch (e) {
     return;
   }
@@ -25,10 +28,12 @@
   }
 
   showBanner("Dropping your receipt into SparkReceipt...");
+  logStep("receipt_picked_up");
 
   const start = Date.now();
   let stage = "openMenu"; // openMenu -> pickType -> attach -> confirm
   let attachedAt = 0;
+  let signInLogged = false; // Activity Log only
 
   const timer = setInterval(() => {
     const elapsed = Date.now() - start;
@@ -37,17 +42,21 @@
     if (document.querySelector('input[type="password"]')) {
       if (elapsed > 180000) {
         finish(
-          "Log in first. Your receipt is saved in Downloads/Receipts."
+          "Sign in first. Your receipt is saved in Downloads/Receipts."
         );
       } else {
-        showBanner("Log in and I will drop the receipt in...");
+        showBanner("Sign in and I'll drop the receipt in...");
+        if (!signInLogged) {
+          signInLogged = true;
+          logStep("sign_in_needed");
+        }
       }
       return;
     }
 
     if (elapsed > 60000) {
       finish(
-        "Could not finish the drop. Drag the file from Downloads/Receipts instead."
+        "Couldn't finish the drop. Drag the file in from Downloads/Receipts instead."
       );
       return;
     }
@@ -88,6 +97,7 @@
           attachedAt = Date.now();
           stage = "confirm";
           showBanner("Receipt attached, confirming...");
+          logStep("file_attached");
         }
       } else if (stage === "confirm") {
         // Give the app a moment to register the file before confirming
@@ -97,7 +107,7 @@
           confirm.click();
           finish("Receipt dropped in. SparkReceipt is scanning it now.", true);
         } else if (Date.now() - attachedAt > 15000) {
-          finish("Receipt attached. Hit Confirm in SparkReceipt to finish.");
+          finish("Receipt attached. Click Confirm in SparkReceipt to finish.");
         }
       }
     } catch (e) {
@@ -134,10 +144,13 @@
     );
   }
 
+  // The upload field in the add-document window. If the drop zone's class
+  // ever changes, a file field inside that window will do, but never some
+  // other file field elsewhere on the page.
   function getInput() {
     return (
       document.querySelector('.file-dropzone input[type="file"]') ||
-      document.querySelector('input[type="file"]')
+      document.querySelector('.add-document-modal-body input[type="file"]')
     );
   }
 
@@ -149,29 +162,54 @@
     );
   }
 
+  // Resolves once the extension has taken the receipt off its queue. The
+  // result is only reported after that, so the two messages can't cross.
+  let consumed = Promise.resolve();
+
   function finish(message, success) {
     clearInterval(timer);
-    try {
-      chrome.runtime.sendMessage({ type: "receiptConsumed" }).catch(() => {});
-    } catch (e) {
-      // extension context gone, nothing to do
-    }
+    consumed = tell({ type: "receiptConsumed", id: payload.id });
     showBanner(message, true);
     if (success && (payload.closeTab || payload.deleteLocal)) {
       settleThenTidy();
     } else {
       sendFinished(!!success);
     }
+    consumed.then(() => logStep("service_note", message));
   }
 
-  function sendFinished(ok) {
+  // Send a message to the extension. Resolves when it replies, or right away
+  // if it can't be reached. Never throws.
+  function tell(msg) {
+    try {
+      return chrome.runtime.sendMessage(msg).catch(() => {});
+    } catch (e) {
+      // extension context gone, nothing to do
+      return Promise.resolve();
+    }
+  }
+
+  // Activity Log only: tell the extension about a step. Never waits, never
+  // throws, and has no say in the upload itself.
+  function logStep(step, note) {
     try {
       chrome.runtime
-        .sendMessage({ type: "dropFinished", success: ok })
+        .sendMessage({
+          type: "logStep",
+          step: step,
+          grabId: payload.id,
+          note: note
+        })
         .catch(() => {});
     } catch (e) {
       // extension context gone, nothing to do
     }
+  }
+
+  function sendFinished(ok) {
+    consumed.then(() =>
+      tell({ type: "dropFinished", success: ok, id: payload.id })
+    );
   }
 
   // Wait until the upload has had time to finish, then let the extension
@@ -201,21 +239,45 @@
     if (!el) {
       el = document.createElement("div");
       el.id = "spark-sender-banner";
+      el.setAttribute("role", "status");
       el.style.cssText =
         "position:fixed;bottom:20px;right:20px;z-index:2147483647;" +
         "max-width:300px;padding:12px 36px 12px 14px;border-radius:10px;" +
-        "background:#0d9488;color:#ffffff;font:13px/1.45 -apple-system," +
+        "background:#0f766e;color:#ffffff;font:13px/1.45 -apple-system," +
         "BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;" +
         "box-shadow:0 4px 14px rgba(0,0,0,0.25);";
+      // A span with a button role, not a <button>, so it never shows up
+      // when this script looks through the page's own buttons.
       const close = document.createElement("span");
       close.textContent = "×";
+      close.setAttribute("role", "button");
+      close.setAttribute("tabindex", "0");
+      close.setAttribute("aria-label", "Close");
       close.style.cssText =
         "position:absolute;top:6px;right:12px;cursor:pointer;" +
-        "font-size:16px;opacity:0.85;";
+        "font-size:16px;opacity:0.85;border-radius:4px;";
       close.addEventListener("click", () => el.remove());
+      close.addEventListener("keydown", (e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          el.remove();
+        }
+      });
       const msg = document.createElement("span");
       msg.id = "spark-sender-banner-text";
       el.appendChild(msg);
+      const cut = Math.round(Number(payload && payload.cutShort)) || 0;
+      if (cut > 0) {
+        // The grab stopped at the extension's limit on very long pages
+        const note = document.createElement("span");
+        note.id = "spark-sender-banner-note";
+        note.style.cssText = "display:block;margin-top:4px;";
+        note.textContent =
+          "This page was long, so only the top " +
+          cut +
+          " screens were captured.";
+        el.appendChild(note);
+      }
       el.appendChild(close);
       document.documentElement.appendChild(el);
     }

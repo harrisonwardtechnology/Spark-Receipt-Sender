@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Receipt Sender",
-  "version": "4.0.0",
+  "version": "4.1.1",
   "description": "One click sends any page or image to SparkReceipt or Expensify as a receipt, uploaded for you automatically.",
   "permissions": [
     "activeTab",
@@ -53,7 +53,7 @@
       "suggested_key": {
         "default": "Alt+Shift+S"
       },
-      "description": "Send this page to your receipt service"
+      "description": "Send This Page to Your Receipt Service"
     }
   }
 }
