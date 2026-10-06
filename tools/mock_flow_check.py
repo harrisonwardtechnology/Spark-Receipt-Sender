@@ -40,12 +40,6 @@ from playwright.sync_api import sync_playwright
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ONLY = sys.argv[1:]
 
-# Until the receiptConsumed / dropFinished timing issue is fixed, a grab with
-# both cleanup extras off can stay on "Working" in Recent Grabs even though the
-# upload went through. Reported as a note, not a failure. Set to False once
-# that's fixed.
-ALLOW_STUCK_STATUS = True
-
 SPARK_HTML = """<!doctype html><html><head><title>SparkReceipt stand-in</title></head><body>
 <button class="sidebar-add-document-cta">Add documents</button>
 <div id="root"></div>
@@ -108,6 +102,15 @@ SHOP_HTML = """<!doctype html><html><head><title>Private Order Title 114-2233</t
 
 SPARK_CLICKS = ["click:add", "click:type:%s", "change:image/jpeg:true:true", "click:confirm"]
 EXPENSIFY_CLICKS = ["click:scan", "dragover", "drop:image/jpeg:true:true", "click:create"]
+# Put an Expensify receipt in the queue ahead of the grab, the way an earlier
+# grab would have, but without opening Expensify.
+PRELOAD_EXPENSIFY = """async () => {
+    const [tab] = await chrome.tabs.query({ url: "https://shop.example.test/*" });
+    const capture = await capturePage(tab, "visible");
+    const id = crypto.randomUUID();
+    await historyAdd({ id, ts: Date.now(), host: "shop.example.test", service: "expensify", status: "working" });
+    await enqueueCapture(capture, buildFilename(capture.ext), { service: "expensify", sparkType: "expense" }, null, id);
+}"""
 AUTO_STEPS = ["grab_started", "file_saved", "receipt_queued", "service_opened", "receipt_picked_up",
               "file_attached", "service_note", "upload_confirmed"]
 
@@ -121,7 +124,25 @@ SCENARIOS = {
     "exp_tidy": dict(settings={"service": "expensify", "closeTab": True, "deleteLocal": True}, tidy=True,
                      clicks=EXPENSIFY_CLICKS),
     "save_only": dict(settings={"destination": "none"}, clicks=[], save_only=True),
+    # An Expensify receipt is already waiting when a SparkReceipt grab is
+    # made. SparkReceipt takes its own, then Expensify opens for the other.
+    "mixed_queue": dict(settings={}, preload=PRELOAD_EXPENSIFY, grabs=2,
+                        clicks=[c % "Expense or receipt" if "%s" in c else c for c in SPARK_CLICKS],
+                        other_clicks=EXPENSIFY_CLICKS),
+    # Expensify takes the file but never shows Create expense: a miss, not
+    # a success. The tab stays open and the backup file is kept.
+    "exp_no_create": dict(settings={"service": "expensify", "closeTab": True}, mode={"new.expensify.com": "no_create"},
+                          clicks=EXPENSIFY_CLICKS[:3], expect="fail", deadline=40),
+    # The SparkReceipt page never loads, so it never reports back. The wait
+    # is shortened from 5 minutes to 6 seconds for the check.
+    "spark_no_reply": dict(settings={}, mode={"app.sparkreceipt.com": "hang"}, clicks=[], expect="fail",
+                           timing={"noReplyMs": 6000, "watchEveryMs": 1000}, never_loads=True,
+                           missed_detail="No word back from SparkReceipt"),
 }
+
+
+# The stand-in pages can misbehave on purpose, per scenario.
+MODE = {}
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -134,7 +155,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        body = {"app.sparkreceipt.com": SPARK_HTML, "new.expensify.com": EXPENSIFY_HTML}.get(host, SHOP_HTML).encode()
+        mode = MODE.get(host)
+        if mode == "hang":
+            time.sleep(45)  # the page never loads, so it never reports back
+        body = {"app.sparkreceipt.com": SPARK_HTML, "new.expensify.com": EXPENSIFY_HTML}.get(host, SHOP_HTML)
+        if mode == "no_create":
+            body = body.replace("root.innerHTML = '<div role=\"button\" id=\"go\">Create expense</div>';",
+                                "root.innerHTML = ''; return;")
+        body = body.encode()
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
@@ -164,8 +192,18 @@ def copy_extension(workdir):
     return target
 
 
+def site_of(url):
+    if "sparkreceipt.com" in url:
+        return "sparkreceipt"
+    if "expensify.com" in url:
+        return "expensify"
+    return None
+
+
 def run_scenario(p, name, sc, port):
     failures, notes = [], []
+    MODE.clear()
+    MODE.update(sc.get("mode") or {})
     workdir = tempfile.mkdtemp(prefix="rs-flow-")
     ext = copy_extension(workdir)
     ctx = p.chromium.launch_persistent_context(
@@ -174,7 +212,7 @@ def run_scenario(p, name, sc, port):
         args=["--disable-extensions-except=" + ext, "--load-extension=" + ext, "--no-proxy-server",
               "--ignore-certificate-errors", "--host-resolver-rules=MAP *:443 127.0.0.1:%d" % port])
     try:
-        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=15000)
+        sw = ctx.service_workers[0] if ctx.service_workers else ctx.wait_for_event("serviceworker", timeout=30000)
         sw_problems = []
         sw.on("console", lambda m: sw_problems.append(m.type + ": " + m.text) if m.type == "error" else None)
         time.sleep(1.0)
@@ -183,34 +221,40 @@ def run_scenario(p, name, sc, port):
                 pg.close()  # the settings page that opens on install
         if sc["settings"]:
             sw.evaluate("(s) => chrome.storage.sync.set(s)", sc["settings"])
+        if sc.get("timing"):
+            # Shorter waits so a scenario doesn't take minutes
+            sw.evaluate("(t) => typeof TIMING === \"object\" && Object.assign(TIMING, t)", sc["timing"])
         shop = ctx.pages[0] if ctx.pages else ctx.new_page()
         shop.goto("https://shop.example.test/orders/114-2233?token=SECRETTOKEN")
         shop.bring_to_front()
-        started = time.time()
+        if sc.get("preload"):
+            sw.evaluate(sc["preload"])
         # Start the grab the way the popup's message does: chrome.tabs.get(tabId).then(run)
         sw.evaluate("""async () => {
             const [tab] = await chrome.tabs.query({ url: "https://shop.example.test/*" });
             chrome.tabs.get(tab.id).then(run);
         }""")
 
-        events, status = [], None
-        deadline = time.time() + 32
+        main_site = (sc["settings"].get("service") or "sparkreceipt")
+        other_site = "expensify" if main_site == "sparkreceipt" else "sparkreceipt"
+        want = sc.get("expect", "saved" if sc.get("save_only") else "ok")
+        events, badges = {}, set()
+        deadline = time.time() + sc.get("deadline", 32)
         while time.time() < deadline:
             time.sleep(0.5)
             for pg in ctx.pages:
-                if "sparkreceipt.com" in pg.url or "expensify.com" in pg.url:
+                site = site_of(pg.url)
+                if site:
                     try:
-                        events = pg.evaluate("window.__events || []")
+                        events[site] = pg.evaluate("window.__events || []")
                     except Exception:
                         pass
+            badges.add(sw.evaluate("() => chrome.action.getBadgeText({})"))
             history = sw.evaluate("() => chrome.storage.local.get('history')").get("history") or []
-            status = history[0]["status"] if history else None
-            done_clicking = events == sc["clicks"]
-            if sc.get("save_only") and status == "saved":
-                break
-            if sc.get("tidy") and status == "ok":
-                break
-            if not sc.get("tidy") and done_clicking and (status == "ok" or time.time() - started > 12):
+            statuses = [h["status"] for h in history]
+            done_clicking = events.get(main_site, []) == sc["clicks"] and (
+                "other_clicks" not in sc or events.get(other_site, []) == sc["other_clicks"])
+            if len(statuses) == sc.get("grabs", 1) and all(st == want for st in statuses) and done_clicking:
                 break
         time.sleep(1.5)
 
@@ -220,14 +264,16 @@ def run_scenario(p, name, sc, port):
         log = store.get("activityLog") or []
         steps = [e["step"] for e in log if e["step"] != "settings_changed"]
         downloads = sw.evaluate("() => chrome.downloads.search({})")
-        service_open = any(("sparkreceipt.com" in pg.url) or ("expensify.com" in pg.url) for pg in ctx.pages)
+        service_open = any(site_of(pg.url) == main_site for pg in ctx.pages)
 
         def expect(ok, text):
             if not ok:
                 failures.append(text)
 
-        expect(events == sc["clicks"], "clicks were %s, expected %s" % (events, sc["clicks"]))
-        expect(len(history) == 1 and history[0]["host"] == "shop.example.test", "Recent Grabs has the site name")
+        got = events.get(main_site, [])
+        expect(got == sc["clicks"], "clicks were %s, expected %s" % (got, sc["clicks"]))
+        expect(len(history) == sc.get("grabs", 1) and history[-1]["host"] == "shop.example.test",
+               "Recent Grabs has the site name")
         expect(len(store.get("queue") or []) == 0, "the upload queue is empty afterward")
         expect(not sw_problems, "service worker logged errors: %s" % sw_problems)
         if sc.get("save_only"):
@@ -241,15 +287,36 @@ def run_scenario(p, name, sc, port):
             expect(downloads == [], "the backup file is deleted after the upload")
             expect(steps == AUTO_STEPS + ["backup_deleted", "tab_closed"], "log steps were %s" % steps)
             expect("inFlight" not in store, "nothing is left in flight")
+        elif "other_clicks" in sc:
+            other = events.get(other_site, [])
+            expect(other == sc["other_clicks"], "%s clicks were %s, expected %s" % (other_site, other, sc["other_clicks"]))
+            expect([h["status"] for h in history] == ["ok"] * len(history),
+                   "statuses are %s, expected all ok" % [h["status"] for h in history])
+            expect(steps.count("upload_confirmed") == len(history), "log steps were %s" % steps)
+            expect("upload_missed" not in steps, "log steps were %s" % steps)
+            expect("inFlight" not in store, "nothing is left in flight")
+        elif want == "fail":
+            expect(status == "fail", "status is %s, expected fail" % status)
+            expect("!" in badges, "the toolbar badge showed '!' (saw %s)" % sorted(badges))
+            expect(len(downloads) == 1 and downloads[0]["state"] == "complete" and downloads[0]["exists"],
+                   "the backup file is kept")
+            expect(steps[:4] == AUTO_STEPS[:4] and steps[-1] == "upload_missed", "log steps were %s" % steps)
+            expect("upload_confirmed" not in steps, "log steps were %s" % steps)
+            if sc.get("missed_detail"):
+                last = log[-1].get("detail", "")
+                expect(sc["missed_detail"] in last, "the miss was logged as %r" % last)
+            if not sc.get("never_loads"):
+                expect(service_open, "the service tab stays open")
+            expect("inFlight" not in store, "nothing is left in flight")
         else:
             expect(service_open, "the service tab stays open")
             expect(len(downloads) == 1 and downloads[0]["state"] == "complete" and downloads[0]["exists"],
                    "the backup file is kept")
             expect(steps == AUTO_STEPS, "log steps were %s" % steps)
-            if status == "working" and ALLOW_STUCK_STATUS:
-                notes.append("upload went through, but Recent Grabs still says Working (known timing issue)")
-            else:
-                expect(status == "ok", "status is %s, expected ok" % status)
+            # With both cleanup extras off, the page reports back right after
+            # it hands the receipt over. Recent Grabs must still say OK.
+            expect(status == "ok", "status is %s, expected ok" % status)
+            expect("inFlight" not in store, "nothing is left in flight")
         kept = json.dumps({k: v for k, v in store.items() if k not in ("queue", "inFlight")})
         for secret in ("SECRETTOKEN", "orders/114", "Private Order Title"):
             expect(secret not in kept, "found %r in extension storage" % secret)

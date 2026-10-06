@@ -18,6 +18,7 @@
   const STEPS = {
     grab_started: "Grab Started",
     file_saved: "File Saved",
+    page_cut_short: "Page Cut Short",
     receipt_queued: "Receipt Queued",
     service_opened: "Service Opened",
     handoff_opened: "Handoff Opened",

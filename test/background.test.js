@@ -141,12 +141,70 @@ test("receipts older than ten minutes drop out of the queue", async () => {
   assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["new"]);
 });
 
-test("taking the head of the queue marks it as in flight", async () => {
-  const bg = loadBackground({ local: { queue: [{ id: "a", createdAt: Date.now() }] } });
+test("taking the head of the queue marks it as in flight, without the image", async () => {
+  const bg = loadBackground({ local: { queue: [{ id: "a", service: "sparkreceipt", b64: "/9j/AAAA", downloadId: 3, createdAt: Date.now() }] } });
   await bg.sandbox.consumeHead();
-  assert.equal(bg.chrome.storage.local.data.inFlight.id, "a");
+  const inFlight = clone(bg.chrome.storage.local.data.inFlight);
+  assert.equal(inFlight.length, 1);
+  assert.equal(inFlight[0].id, "a");
+  assert.equal(inFlight[0].service, "sparkreceipt");
+  assert.equal(inFlight[0].downloadId, 3);
+  assert.equal(typeof inFlight[0].startedAt, "number");
+  assert.equal(inFlight[0].b64, undefined);
   assert.equal(bg.chrome.storage.local.data.queue.length, 0);
   assert.equal(await bg.sandbox.getQueueHead(), null);
+});
+
+test("each service page gets the oldest receipt for its own service", async () => {
+  const now = Date.now();
+  const bg = loadBackground({
+    local: {
+      queue: [
+        { id: "e1", service: "expensify", createdAt: now },
+        { id: "s1", service: "sparkreceipt", createdAt: now },
+        { id: "e2", service: "expensify", createdAt: now },
+        { id: "s2", service: "sparkreceipt", createdAt: now }
+      ]
+    }
+  });
+  const EXP_SENDER = { id: "testextensionid", url: "https://new.expensify.com/", tab: { id: 101 } };
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply.id, "s1");
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "expensify" }, EXP_SENDER)).reply.id, "e1");
+  // The page that sent the message decides, not what the message claims
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "expensify" }, SPARK_SENDER)).reply.id, "s1");
+  // Anything else gets nothing
+  assert.equal((await bg.send({ type: "getPendingReceipt" }, { url: "https://evil.example.com/" })).reply, null);
+
+  await bg.send({ type: "receiptConsumed", id: "s1" }, SPARK_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e1", "e2", "s2"]);
+  assert.equal((await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply.id, "s2");
+  await bg.send({ type: "receiptConsumed", id: "e1" }, EXP_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e2", "s2"]);
+  assert.deepEqual(bg.chrome.storage.local.data.inFlight.map((q) => q.id), ["s1", "e1"]);
+
+  // Each page's result goes to its own receipt
+  await bg.send({ type: "dropFinished", success: true, id: "e1" }, EXP_SENDER);
+  assert.deepEqual(bg.chrome.storage.local.data.inFlight.map((q) => q.id), ["s1"]);
+  await bg.send({ type: "dropFinished", success: true }, SPARK_SENDER);
+  assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+});
+
+test("a receipt for the other service doesn't hold up this one, and is opened next", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.enqueue({ id: "e1", service: "expensify", createdAt: Date.now() });
+  await bg.sandbox.historyAdd({ id: "e1", status: "working" });
+  await bg.sandbox.run(TAB); // SparkReceipt is the chosen service
+  await bg.settle();
+  const head = (await bg.send({ type: "getPendingReceipt", service: "sparkreceipt" }, SPARK_SENDER)).reply;
+  assert.equal(head.service, "sparkreceipt");
+  await bg.send({ type: "receiptConsumed", id: head.id }, SPARK_SENDER);
+  await bg.send({ type: "dropFinished", success: true, id: head.id }, SPARK_SENDER);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "ok");
+  assert.equal(bg.chrome.storage.local.data.history[1].status, "working");
+  assert.deepEqual(bg.chrome.storage.local.data.queue.map((q) => q.id), ["e1"]);
+  const opened = callsTo(bg.calls, "tabs.create").map((c) => c[1].url);
+  assert.deepEqual(opened, ["https://app.sparkreceipt.com/", "https://new.expensify.com/"]);
 });
 
 test("a captured image is queued without its folder or data URL wrapper", async () => {
@@ -169,6 +227,127 @@ test("a captured image is queued without its folder or data URL wrapper", async 
   assert.equal(item.closeTab, true);
   assert.equal(item.deleteLocal, false);
   assert.equal(typeof item.createdAt, "number");
+});
+
+// ---------- receipts that never finish ----------
+
+function missedSteps(bg) {
+  return (bg.chrome.storage.local.data.activityLog || [])
+    .filter((e) => e.step === "upload_missed")
+    .map((e) => [e.grabId, e.service, e.detail]);
+}
+
+function badges(bg) {
+  return callsTo(bg.calls, "action.setBadgeText").map((c) => c[1].text);
+}
+
+test("on start, receipts that waited too long are cleared and marked as missed", async () => {
+  const now = Date.now();
+  const bg = loadBackground({
+    local: {
+      queue: [
+        { id: "aa01", service: "expensify", b64: "AAAA", createdAt: now - 11 * 60 * 1000 },
+        { id: "bb02", service: "sparkreceipt", b64: "AAAA", createdAt: now }
+      ],
+      inFlight: { id: "cc03", service: "sparkreceipt", downloadId: 4 },
+      history: [
+        { id: "bb02", ts: now, status: "working" },
+        { id: "aa01", ts: now - 11 * 60 * 1000, status: "working" },
+        { id: "cc03", ts: now - 60 * 60 * 1000, status: "working" },
+        { id: "dd04", ts: now - 60 * 60 * 1000, status: "working" },
+        { id: "ee05", ts: now - 60 * 60 * 1000, status: "ok" }
+      ]
+    }
+  });
+  await bg.settle();
+  const data = bg.chrome.storage.local.data;
+  assert.deepEqual(data.queue.map((q) => q.id), ["bb02"]);
+  assert.equal(data.inFlight, undefined);
+  assert.deepEqual(data.history.map((h) => h.status), ["working", "fail", "fail", "fail", "ok"]);
+  assert.deepEqual(missedSteps(bg).sort(), [
+    ["aa01", "expensify", "No word back from Expensify"],
+    ["cc03", "sparkreceipt", "No word back from SparkReceipt"]
+  ]);
+  assert.ok(badges(bg).includes("!"));
+  // Something is still waiting, so it keeps watching
+  assert.equal(bg.intervals.filter((i) => i.live).length, 1);
+});
+
+test("on start with nothing waiting, nothing changes", async () => {
+  const bg = loadBackground({ local: { history: [{ id: "a", ts: Date.now(), status: "working" }] } });
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(callsTo(bg.calls, "action.setBadgeText").length, 0);
+  assert.equal(bg.intervals.length, 0);
+  assert.equal(bg.chrome.storage.local.data.activityLog, undefined);
+});
+
+test("a receipt stuck in flight is cleared when the next grab starts", async () => {
+  const bg = loadBackground({ sync: { destination: "none" }, local: { inFlight: [{ id: "ff01", service: "expensify", startedAt: Date.now() }] } });
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.inFlight.length, 1);
+  bg.chrome.storage.local.data.inFlight[0].startedAt = Date.now() - 4 * 60 * 1000;
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+  assert.deepEqual(missedSteps(bg), [["ff01", "expensify", "No word back from Expensify"]]);
+});
+
+test("if the service page never reports back, the grab is marked missed and the badge shows !", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(badges(bg).pop(), "...");
+  assert.equal(bg.intervals.filter((i) => i.live).length, 1);
+  const id = bg.chrome.storage.local.data.history[0].id;
+
+  // Four minutes in: still waiting
+  const start = Date.now();
+  bg.evalIn("Date.now = () => " + (start + 4 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+
+  // Six minutes with no word from the page: a miss
+  bg.evalIn("Date.now = () => " + (start + 6 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "fail");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 0);
+  assert.equal(badges(bg).pop(), "", "the ! is flashed, then cleared");
+  assert.ok(badges(bg).includes("!"));
+  assert.deepEqual(missedSteps(bg), [[id, "sparkreceipt", "No word back from SparkReceipt"]]);
+  assert.equal(callsTo(bg.calls, "downloads.removeFile").length, 0, "the backup file is kept");
+
+  // Nothing left to watch
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.intervals.filter((i) => i.live).length, 0);
+});
+
+test("a page that is still talking isn't timed out", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  const start = Date.now();
+  bg.evalIn("Date.now = () => " + (start + 4 * 60 * 1000));
+  await bg.send({ type: "logStep", step: "sign_in_needed" }, SPARK_SENDER);
+  bg.evalIn("Date.now = () => " + (start + 8 * 60 * 1000));
+  bg.fireIntervals();
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "working");
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+  assert.deepEqual(missedSteps(bg), []);
+});
+
+test("the privacy policy's limit on waiting receipts matches the code", () => {
+  const { evalIn } = loadBackground();
+  const minutes = evalIn("QUEUE_MAX_AGE_MS") / 60000;
+  assert.equal(minutes, 10);
+  for (const doc of ["PRIVACY.md", "privacy.html"]) {
+    assert.match(read(doc), new RegExp("still waiting after " + minutes + " minutes is cleared"), doc);
+  }
 });
 
 // ---------- Recent Grabs ----------
@@ -203,6 +382,24 @@ test("Gmail and mail app drafts are addressed and encoded correctly", async () =
   assert.equal(callsTo(bg.calls, "tabs.create")[2][1].url, "https://new.expensify.com/");
   await bg.sandbox.openDestination(tab, { service: "expensify", destination: "none" });
   assert.equal(callsTo(bg.calls, "tabs.create").length, 3);
+});
+
+test("email drafts name the site, never the full web address", async () => {
+  const bg = loadBackground();
+  await bg.sandbox.openDestination(TAB, { service: "expensify", destination: "gmail" });
+  await bg.sandbox.openDestination(TAB, { service: "sparkreceipt", sparkEmail: "me@spark.example", destination: "mailto" });
+  await bg.sandbox.openDestination({ title: "Order" }, { service: "expensify", destination: "gmail" });
+  const urls = callsTo(bg.calls, "tabs.create").map((c) => c[1].url);
+  const bodies = urls.map((u) => decodeURIComponent(u.slice(u.indexOf("body=") + 5)));
+  assert.equal(bodies[0], "Receipt captured from amazon.com\n\nAttach the newest file from Downloads/Receipts before sending.");
+  assert.equal(bodies[1], bodies[0]);
+  assert.match(bodies[2], /^Receipt captured from a page\n/);
+  for (const url of urls) {
+    assert.ok(!url.includes("SECRETTOKEN") && !url.includes("order-details") && !url.includes("orderID"), url);
+  }
+  for (const doc of ["PRIVACY.md", "privacy.html"]) {
+    assert.match(read(doc), /the page title and the site name \(not the full web address\)/, doc);
+  }
 });
 
 test("the service tab is reused when one is open, and silent mode stays in the background", async () => {
@@ -275,6 +472,24 @@ test("an interrupted download fails the grab", async () => {
   assert.equal(bg.chrome.storage.local.data.queue, undefined);
 });
 
+test("a download that finishes before anyone is listening is still noticed", async () => {
+  // Failed before the listener was in place: the grab must fail, not carry on
+  let bg = loadBackground({ downloadEarly: true, downloadFails: true });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.history[0].status, "fail");
+  assert.equal(bg.chrome.storage.local.data.queue, undefined);
+  assert.deepEqual(steps(bg), ["grab_started", "grab_failed"]);
+  assert.equal(bg.chrome.downloads.onChanged.listeners.length, 0);
+
+  // Finished before the listener was in place: no waiting, carry on
+  bg = loadBackground({ downloadEarly: true });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.queue.length, 1);
+  assert.equal(bg.chrome.downloads.onChanged.listeners.length, 0);
+});
+
 test("nothing private reaches extension storage besides the queued image", async () => {
   const bg = loadBackground({ sync: { destination: "none" } });
   await bg.sandbox.run(TAB);
@@ -289,6 +504,139 @@ test("nothing private reaches extension storage besides the queued image", async
       []
     );
   }
+});
+
+// ---------- full-page capture ----------
+
+// A stand-in page that can be scrolled and captured, `height` pixels tall in
+// a 700 pixel window. Notes the arguments of every script run in it.
+function fakePage(bg, opts) {
+  const o = opts || {};
+  const scripts = [];
+  let shots = 0;
+  bg.chrome.scripting.executeScript = async (details) => {
+    scripts.push(details.args ? details.args.slice() : "metrics");
+    if (!details.args) {
+      return [{ result: { scrollHeight: o.height, viewport: 700, width: 1000, dpr: 1, originalY: 120 } }];
+    }
+    return [{ result: null }];
+  };
+  bg.chrome.tabs.captureVisibleTab = async () => {
+    shots++;
+    if (shots === o.failOnShot) throw new Error("Too many captures");
+    return "data:image/png;base64,iVBORw0KGgo=";
+  };
+  bg.sandbox.fetch = async () => ({ blob: async () => ({}) });
+  bg.sandbox.createImageBitmap = async () => ({ width: 1000, height: 700 });
+  bg.sandbox.OffscreenCanvas = class {
+    constructor(w, h) {
+      this.size = [w, h];
+    }
+    getContext() {
+      return { drawImage() {} };
+    }
+    async convertToBlob() {
+      return { arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer };
+    }
+  };
+  return { scripts, shots: () => shots };
+}
+
+test("a full-page capture puts the page back the way it was", async () => {
+  const bg = loadBackground();
+  const page = fakePage(bg, { height: 2000 });
+  const capture = await bg.sandbox.captureFullPage(TAB);
+  assert.equal(capture.ext, "jpg");
+  assert.equal(page.shots(), 3);
+  assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [1300, true], [120]]);
+});
+
+test("a full-page capture that fails partway still puts the page back", async () => {
+  const bg = loadBackground();
+  const page = fakePage(bg, { height: 3000, failOnShot: 2 });
+  await assert.rejects(bg.sandbox.captureFullPage(TAB), /Too many captures/);
+  assert.deepEqual(clone(page.scripts), ["metrics", [0, false], [700, true], [120]]);
+});
+
+test("a page taller than 12 screens is cut short, and says so", async () => {
+  let bg = loadBackground();
+  let page = fakePage(bg, { height: 20000 });
+  const tall = await bg.sandbox.captureFullPage(TAB);
+  assert.equal(page.shots(), 12);
+  assert.equal(tall.cutShort, true);
+
+  bg = loadBackground();
+  page = fakePage(bg, { height: 12 * 700 });
+  assert.equal((await bg.sandbox.captureFullPage(TAB)).cutShort, false);
+  assert.equal(page.shots(), 12);
+});
+
+test("a cut-short grab is logged, noted for the service page, and badged", async () => {
+  let bg = loadBackground();
+  fakePage(bg, { height: 20000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  const cut = bg.chrome.storage.local.data.activityLog.find((e) => e.step === "page_cut_short");
+  assert.equal(cut.detail, "Only the top 12 screens were saved");
+  assert.equal(cut.grabId, bg.chrome.storage.local.data.history[0].id);
+  assert.equal(bg.chrome.storage.local.data.queue[0].cutShort, 12);
+
+  bg = loadBackground({ sync: { destination: "none" } });
+  fakePage(bg, { height: 20000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.ok(badges(bg).includes("CUT"));
+  assert.ok(!badges(bg).includes("OK"));
+  assert.deepEqual(steps(bg), ["grab_started", "file_saved", "page_cut_short", "saved_only"]);
+
+  // A page that fits is not marked
+  bg = loadBackground();
+  fakePage(bg, { height: 2000 });
+  await bg.sandbox.run(TAB);
+  await bg.settle();
+  assert.equal(bg.chrome.storage.local.data.queue[0].cutShort, 0);
+  assert.ok(!steps(bg).includes("page_cut_short"));
+});
+
+// ---------- Grab All Tabs ----------
+
+async function batch(failOn) {
+  const tabs = [
+    { id: 11, windowId: 1, url: "https://www.example.com/order/1" },
+    { id: 12, windowId: 1, url: "https://shop.example.org/order/2" },
+    { id: 13, windowId: 1, url: "chrome://settings" }
+  ];
+  const bg = loadBackground({ tabs: (q) => (q.windowId ? tabs : []) });
+  let shot = 0;
+  bg.chrome.tabs.captureVisibleTab = async () => {
+    shot++;
+    if (failOn.includes(shot)) throw new Error("Capture failed");
+    return "data:image/jpeg;base64,/9j/AAAA";
+  };
+  await bg.sandbox.runBatch(1);
+  await bg.settle();
+  const done = (bg.chrome.storage.local.data.activityLog || []).find((e) => e.step === "batch_finished");
+  const lastBadge = callsTo(bg.calls, "action.setBadgeText").map((c) => c[1].text).filter((t) => t).pop();
+  return { bg, detail: done && done.detail, lastBadge, opened: callsTo(bg.calls, "tabs.create").length };
+}
+
+test("Grab All Tabs shows OK only when every tab made it", async () => {
+  const all = await batch([]);
+  assert.equal(all.lastBadge, "OK");
+  assert.equal(all.detail, "2 tabs");
+  assert.equal(all.opened, 1);
+  assert.equal(all.bg.chrome.storage.local.data.queue.length, 2);
+
+  const some = await batch([2]);
+  assert.equal(some.lastBadge, "!");
+  assert.equal(some.detail, "1 of 2 tabs grabbed. 1 didn't work.");
+  assert.equal(some.opened, 1);
+  assert.deepEqual(some.bg.chrome.storage.local.data.history.map((h) => h.status), ["fail", "working"]);
+
+  const none = await batch([1, 2]);
+  assert.equal(none.lastBadge, "!");
+  assert.equal(none.detail, "0 of 2 tabs grabbed. 2 didn't work.");
+  assert.equal(none.opened, 0, "nothing to drop, so the service isn't opened");
 });
 
 // ---------- finishing an upload ----------
@@ -314,6 +662,26 @@ test("a confirmed upload marks the grab OK and clears the in-flight copy", async
   assert.equal(callsTo(bg.calls, "tabs.remove").length, 0);
   assert.ok(callsTo(bg.calls, "action.setBadgeText").some((c) => c[1].text === "OK"));
   assert.deepEqual(steps(bg), ["grab_started", "file_saved", "receipt_queued", "service_opened", "upload_confirmed"]);
+});
+
+test("a finished message right behind the consumed message still records the upload", async () => {
+  // The service page sends both back to back. They must not cross.
+  for (const success of [true, false]) {
+    const bg = loadBackground({ slowStorage: true });
+    await bg.sandbox.run(TAB);
+    await bg.settle();
+    await Promise.all([
+      bg.send({ type: "receiptConsumed" }, SPARK_SENDER),
+      bg.send({ type: "dropFinished", success }, SPARK_SENDER)
+    ]);
+    await bg.settle();
+    assert.equal(bg.chrome.storage.local.data.history[0].status, success ? "ok" : "fail");
+    assert.equal(bg.chrome.storage.local.data.inFlight, undefined);
+    assert.equal(bg.chrome.storage.local.data.queue.length, 0);
+    assert.equal(steps(bg).pop(), success ? "upload_confirmed" : "upload_missed");
+    const missed = bg.chrome.storage.local.data.activityLog.filter((e) => /^upload_/.test(e.step));
+    assert.equal(missed[0].grabId, bg.chrome.storage.local.data.history[0].id);
+  }
 });
 
 test("cleanup extras run only after a confirmed upload", async () => {

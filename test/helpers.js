@@ -41,12 +41,16 @@ function event() {
   };
 }
 
-function storageArea(name, start, calls, onChanged, failKeys) {
+// Real storage takes a moment. `slow` makes every call wait a turn of the
+// event loop, which is what lets timing problems show up in tests.
+function storageArea(name, start, calls, onChanged, failKeys, slow) {
   const data = clone(start || {});
+  const pause = () => (slow ? new Promise((r) => setImmediate(r)) : null);
   return {
     data,
     async get(query) {
       calls.push(["storage." + name + ".get", clone(query)]);
+      await pause();
       if (query === null || query === undefined) return clone(data);
       const out = {};
       if (typeof query === "string") {
@@ -64,6 +68,7 @@ function storageArea(name, start, calls, onChanged, failKeys) {
     },
     async set(items) {
       calls.push(["storage." + name + ".set", clone(items)]);
+      await pause();
       if (failKeys && Object.keys(items).some((k) => failKeys.includes(k))) {
         throw new Error("storage is full");
       }
@@ -76,6 +81,7 @@ function storageArea(name, start, calls, onChanged, failKeys) {
     },
     async remove(key) {
       calls.push(["storage." + name + ".remove", key]);
+      await pause();
       delete data[key];
     }
   };
@@ -92,6 +98,7 @@ function fakeChrome(opts) {
   const onChanged = event();
   const downloadsChanged = event();
   let nextDownload = 1;
+  const downloadStates = {};
   let nextTab = 100;
   const chrome = {
     runtime: {
@@ -105,7 +112,7 @@ function fakeChrome(opts) {
     storage: {
       onChanged,
       sync: storageArea("sync", o.sync, calls, onChanged),
-      local: storageArea("local", o.local, calls, onChanged, o.failLocalKeys)
+      local: storageArea("local", o.local, calls, onChanged, o.failLocalKeys, o.slowStorage)
     },
     contextMenus: {
       onClicked: event(),
@@ -167,13 +174,19 @@ function fakeChrome(opts) {
       async download(options) {
         const id = nextDownload++;
         calls.push(["downloads.download", { ...clone(options), url: options.url.slice(0, 22) }]);
-        setImmediate(() =>
-          downloadsChanged.fire({
-            id,
-            state: { current: o.downloadFails ? "interrupted" : "complete" }
-          })
-        );
+        downloadStates[id] = "in_progress";
+        const end = () => {
+          downloadStates[id] = o.downloadFails ? "interrupted" : "complete";
+          downloadsChanged.fire({ id, state: { current: downloadStates[id] } });
+        };
+        // `downloadEarly`: the file is done before the caller even hears its id
+        if (o.downloadEarly) end();
+        else setImmediate(end);
         return id;
+      },
+      async search(query) {
+        calls.push(["downloads.search", clone(query)]);
+        return downloadStates[query.id] ? [{ id: query.id, state: downloadStates[query.id] }] : [];
       },
       removeFile: note("downloads.removeFile"),
       erase: note("downloads.erase"),
@@ -213,11 +226,21 @@ function loadBackground(opts) {
   const o = opts || {};
   const { chrome, calls } = fakeChrome(o);
   const timers = fastTimers();
+  // Repeating timers never fire on their own. Tests fire them with
+  // fireIntervals() when they want to.
+  const intervals = [];
   const sandbox = {
     chrome,
     console: { log() {}, warn() {}, error() {} },
     setTimeout: timers.setTimeout,
     clearTimeout: timers.clearTimeout,
+    setInterval: (fn, ms) => {
+      intervals.push({ fn, ms, live: true });
+      return intervals.length;
+    },
+    clearInterval: (id) => {
+      if (intervals[id - 1]) intervals[id - 1].live = false;
+    },
     crypto: globalThis.crypto,
     URL,
     btoa,
@@ -262,7 +285,8 @@ function loadBackground(opts) {
     if (keptOpen && !replied) await waiting;
     return { keptOpen, reply, replied };
   };
-  return { sandbox, chrome, calls, evalIn, settle, send };
+  const fireIntervals = () => intervals.filter((i) => i.live).forEach((i) => i.fn());
+  return { sandbox, chrome, calls, evalIn, settle, send, intervals, fireIntervals };
 }
 
 function callsTo(calls, api) {

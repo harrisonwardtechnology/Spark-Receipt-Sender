@@ -2,6 +2,31 @@
 
 The newest version is at the top.
 
+## 4.1.1, October 2026
+
+Bug fixes. The upload screens are walked with the same buttons, clicks and timings as before, with two exceptions noted below.
+
+### Fixed
+
+- **Recent Grabs no longer gets stuck on Working.** When a service page reported back right after taking a receipt, the result could be lost. The extension now handles those messages one at a time, in order, so the upload is recorded and the image is cleared from storage.
+- **Expensify misses are reported as misses.** If Expensify took the file but never showed Create expense, the extension used to call it a success. Now the tab stays open, the backup file is kept, and the badge shows "!".
+- **One service's receipt no longer blocks the other's.** Each service page now takes the oldest receipt meant for it, so a waiting Expensify receipt can't hold up SparkReceipt drops, or the other way around.
+- **Pages are put back after a failed full-page grab.** Hidden headers and the scroll position are restored even if a capture fails partway.
+- **Fast downloads aren't missed.** A backup file that finished (or failed) before the extension started listening is now noticed right away.
+- **Waiting receipts don't linger.** Anything still waiting after 10 minutes is cleared, a receipt a page took is cleared within 3 minutes, and the same cleanup runs when the extension starts and on every grab. The privacy policy now says exactly that.
+- **SparkReceipt only uses its own upload field.** If the usual drop zone isn't there, the extension uses a file field inside the add-document window or counts it as a miss. It never picks some other file field on the page.
+- **The "..." badge can't hang forever.** If a service page says nothing for 5 minutes while receipts wait, they're marked as missed, the Activity Log says "No word back", and the badge shows "!".
+- **Grab All Tabs tells the truth.** It shows OK only when every tab made it and "!" if any didn't, with the count in the Activity Log.
+- **The corner note's close button works from the keyboard.** Tab to it and press Enter or Space. Screen readers hear "Close".
+- **Email drafts name the site, not the full web address.** Order numbers and sign-in tokens in a page's address no longer end up in a draft. The privacy policy is updated to match.
+- **Long pages say when they're cut short.** Pages taller than 12 screens are still capped, but now the Activity Log notes it, the note on the service page mentions it, and with the other After Grabbing the Page choices the badge shows "CUT".
+
+### Changed in the Upload Flows
+
+- SparkReceipt: the backup lookup for the upload field now only looks inside the add-document window. The main lookup is unchanged.
+- Expensify: no Create expense button after 20 seconds now counts as a miss instead of a success.
+- Both: the page reports the result only after the extension confirms it took the receipt, and names the receipt and service it's talking about.
+
 ## 4.1.0, October 2026
 
 A standards refresh. The upload flows work exactly as they did in 4.0.0.
