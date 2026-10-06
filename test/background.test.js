@@ -43,13 +43,71 @@ test("extFromMime picks the right file ending", () => {
   assert.equal(sandbox.extFromMime("application/octet-stream"), "png");
 });
 
-test("file names are a unique id inside the Receipts folder", () => {
+// ---------- backup file names ----------
+
+const OCT_4_EVENING = new Date(2026, 9, 4, 19, 32, 5); // local time
+const NAME = /^Receipts\/([a-z0-9.-]+)-(\d{4}-\d{2}-\d{2})-(\d{4})-([a-z0-9]{4})\.(jpg|png)$/;
+
+function nameParts(sandbox, url, ext) {
+  const name = sandbox.buildFilename(ext || "jpg", url, OCT_4_EVENING);
+  const m = name.match(NAME);
+  assert.ok(m, "odd file name " + name);
+  return { name, site: m[1], date: m[2], time: m[3], id: m[4] };
+}
+
+test("file names are the site, the local date and time, and a short id", () => {
   const { sandbox } = loadBackground();
-  const a = sandbox.buildFilename("jpg");
-  const b = sandbox.buildFilename("png");
-  assert.match(a, /^Receipts\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jpg$/);
-  assert.match(b, /\.png$/);
-  assert.notEqual(a.slice(0, -4), b.slice(0, -4));
+  const n = nameParts(sandbox, "https://www.amazon.com/gp/css/order-details?orderID=114-22&token=SECRET");
+  assert.equal(n.site, "amazon.com");
+  assert.equal(n.date, "2026-10-04");
+  assert.equal(n.time, "1932");
+  assert.ok(!n.name.includes("SECRET") && !n.name.includes("order"));
+  assert.match(sandbox.buildFilename("png", "https://riders.uber.com/trips", OCT_4_EVENING), /^Receipts\/riders\.uber\.com-2026-10-04-1932-[a-z0-9]{4}\.png$/);
+  // Early in the morning and early in the year still use two digits
+  assert.match(sandbox.buildFilename("jpg", "https://a.com/", new Date(2027, 0, 2, 3, 4)), /^Receipts\/a\.com-2027-01-02-0304-[a-z0-9]{4}\.jpg$/);
+  // With no time given, it's now
+  assert.match(sandbox.buildFilename("jpg", "https://a.com/"), NAME);
+});
+
+test("file names never collide, even in the same minute", () => {
+  const { sandbox } = loadBackground();
+  const names = new Set();
+  for (let i = 0; i < 200; i++) names.add(sandbox.buildFilename("jpg", "https://shop.example/", OCT_4_EVENING));
+  assert.ok(names.size >= 198, "only " + names.size + " different names in 200");
+});
+
+test("file names handle odd web addresses", () => {
+  const { sandbox } = loadBackground();
+  const site = (url) => nameParts(sandbox, url).site;
+  // International names keep their plain-letter (xn--) form
+  assert.equal(site("https://www.b\u00fccher.example/order"), "xn--bcher-kva.example");
+  assert.equal(site("https://\u4f8b\u3048.jp/"), "xn--r8jz45g.jp");
+  // Capitals, ports, user names and trailing dots are dropped
+  assert.equal(site("https://WWW.Shop.Example.COM:8443/x"), "shop.example.com");
+  assert.equal(site("https://user:pass@store.example/"), "store.example");
+  assert.equal(site("https://shop.example./"), "shop.example");
+  // IP addresses
+  assert.equal(site("http://192.168.1.20:8080/invoice"), "192.168.1.20");
+  assert.equal(site("http://[2001:db8::1]/receipt"), "2001-db8-1");
+  // Very long names are cut to 40 characters, never ending on a dot or dash
+  const long = site("https://" + "a".repeat(30) + ".b-" + "c".repeat(40) + ".example.com/");
+  assert.ok(long.length <= 40, long);
+  assert.match(long, /^[a-z0-9].*[a-z0-9]$/);
+  assert.equal(site("https://" + "x".repeat(39) + ".example/"), "x".repeat(39));
+});
+
+test("file names fall back to 'receipt' when there's no web site", () => {
+  const { sandbox } = loadBackground();
+  const site = (url) => nameParts(sandbox, url).site;
+  assert.equal(site("file:///C:/Users/harrison/Downloads/invoice.html"), "receipt");
+  assert.equal(site("file://server/share/invoice.html"), "receipt");
+  assert.equal(site("chrome://extensions/"), "receipt");
+  assert.equal(site("about:blank"), "receipt");
+  assert.equal(site("data:text/html,hi"), "receipt");
+  assert.equal(site(undefined), "receipt");
+  assert.equal(site(""), "receipt");
+  assert.equal(site("not a url"), "receipt");
+  assert.equal(site("https://www./"), "receipt");
 });
 
 test("bufToBase64 handles small and large buffers", () => {
@@ -426,7 +484,7 @@ test("save-only grab: file saved, list updated, nothing opened", async () => {
   await bg.sandbox.run(TAB);
   await bg.settle();
   const dl = callsTo(bg.calls, "downloads.download")[0][1];
-  assert.match(dl.filename, /^Receipts\/[0-9a-f-]{36}\.jpg$/);
+  assert.match(dl.filename, /^Receipts\/amazon\.com-\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9]{4}\.jpg$/);
   assert.equal(dl.saveAs, false);
   assert.equal(dl.conflictAction, "uniquify");
   const row = bg.chrome.storage.local.data.history[0];
@@ -446,7 +504,7 @@ test("automatic grab: receipt is queued and the service is opened", async () => 
   assert.equal(item.service, "expensify");
   assert.equal(item.b64, "/9j/AAAA");
   assert.equal(item.mime, "image/jpeg");
-  assert.match(item.filename, /^[0-9a-f-]{36}\.jpg$/);
+  assert.match(item.filename, /^amazon\.com-\d{4}-\d{2}-\d{2}-\d{4}-[a-z0-9]{4}\.jpg$/);
   assert.equal(item.id, bg.chrome.storage.local.data.history[0].id);
   assert.deepEqual(callsTo(bg.calls, "tabs.create")[0][1], { url: "https://new.expensify.com/", active: false });
   assert.equal(bg.chrome.storage.local.data.history[0].status, "working");

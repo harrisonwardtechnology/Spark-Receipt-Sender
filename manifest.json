@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Receipt Sender",
-  "version": "4.1.1",
+  "version": "4.2.0",
   "description": "One click sends any page or image to SparkReceipt or Expensify as a receipt, uploaded for you automatically.",
   "permissions": [
     "activeTab",

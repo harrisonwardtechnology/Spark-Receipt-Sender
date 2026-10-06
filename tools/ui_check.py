@@ -42,7 +42,7 @@ HISTORY = [
 LOG = [
     {"ts": 1790968325000, "step": "grab_started", "grabId": "a1", "host": "amazon.com",
      "service": "sparkreceipt", "detail": "Page"},
-    {"ts": 1790968327000, "step": "file_saved", "grabId": "a1", "detail": "Receipts/a1.jpg"},
+    {"ts": 1790968327000, "step": "file_saved", "grabId": "a1", "detail": "Receipts/amazon.com-2026-10-02-1412-a7k2.jpg"},
     {"ts": 1790968336000, "step": "upload_confirmed", "grabId": "a1", "service": "sparkreceipt"},
 ]
 

@@ -59,7 +59,7 @@ document.querySelector(".sidebar-add-document-cta").addEventListener("click", ()
     const input = modal.querySelector("input");
     input.addEventListener("change", () => {
       const f = input.files[0];
-      ev("change:" + f.type + ":" + (f.size > 240) + ":" + /^[0-9a-f-]{36}\\.(jpg|png)$/.test(f.name));
+      ev("change:" + f.type + ":" + (f.size > 240) + ":" + /^shop\\.example\\.test-\\d{4}-\\d{2}-\\d{2}-\\d{4}-[a-z0-9]{4}\\.(jpg|png)$/.test(f.name));
     });
     document.getElementById("c").addEventListener("click", () => {
       ev("click:confirm");
@@ -85,7 +85,7 @@ document.querySelector('[data-testid="floating-receipt-button"]').addEventListen
   zone.addEventListener("drop", (e) => {
     e.preventDefault();
     const f = e.dataTransfer.files[0];
-    ev("drop:" + f.type + ":" + (f.size > 240) + ":" + /^[0-9a-f-]{36}\\.(jpg|png)$/.test(f.name));
+    ev("drop:" + f.type + ":" + (f.size > 240) + ":" + /^shop\\.example\\.test-\\d{4}-\\d{2}-\\d{2}-\\d{4}-[a-z0-9]{4}\\.(jpg|png)$/.test(f.name));
     root.innerHTML = '<div role="button" id="go">Create expense</div>';
     document.getElementById("go").addEventListener("click", () => {
       ev("click:create");
@@ -109,7 +109,7 @@ PRELOAD_EXPENSIFY = """async () => {
     const capture = await capturePage(tab, "visible");
     const id = crypto.randomUUID();
     await historyAdd({ id, ts: Date.now(), host: "shop.example.test", service: "expensify", status: "working" });
-    await enqueueCapture(capture, buildFilename(capture.ext), { service: "expensify", sparkType: "expense" }, null, id);
+    await enqueueCapture(capture, buildFilename(capture.ext, tab.url), { service: "expensify", sparkType: "expense" }, null, id);
 }"""
 AUTO_STEPS = ["grab_started", "file_saved", "receipt_queued", "service_opened", "receipt_picked_up",
               "file_attached", "service_note", "upload_confirmed"]

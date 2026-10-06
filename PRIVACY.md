@@ -18,7 +18,7 @@ When you grab a page or image, the extension captures it in your browser, saves 
 - **Recent Grabs**, a short list of your last 10 grabs (site name, service, and how it went), is kept on this device only.
 - **The Activity Log**, a record of up to 500 steps the extension took (the time, the step, the site name, the service, and a short note such as why a grab didn't finish), is kept on this device only. It never holds page contents, file contents, or full web addresses. You can export it or clear it on the settings page whenever you like.
 - **Receipts waiting to upload** are held briefly in extension storage on this device. The image is removed as soon as the service page takes it, and anything still waiting after 10 minutes is cleared.
-- **A backup copy of each grab** is saved to Downloads/Receipts on your computer. It stays there until you delete it, or until the extension deletes it for you if you turn that extra on.
+- **A backup copy of each grab** is saved to Downloads/Receipts on your computer. Its name includes the site's name and the date and time of the grab, for example amazon.com-2026-10-04-1932-a7k2.jpg, so anyone who can see that folder can see which sites you saved receipts from. It stays there until you delete it, or until the extension deletes it for you if you turn that extra on.
 
 ## What We Never Collect
 
